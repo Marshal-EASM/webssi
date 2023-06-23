@@ -43,7 +43,7 @@ func PrintJSON(r *detectors.ResultWithMetadata) error {
 		SourceType:     r.SourceType,
 		SourceName:     r.SourceName,
 		DetectorType:   r.DetectorType,
-		DetectorName:   r.DetectorType.String(),
+		DetectorName:   r.DetectorName,
 		DecoderName:    r.DecoderType.String(),
 		Verified:       r.Verified,
 		Raw:            string(r.Raw),

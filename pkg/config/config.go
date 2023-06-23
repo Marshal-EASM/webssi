@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"google.golang.org/appengine/log"
 	"os"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/custom_detectors"
@@ -35,7 +37,8 @@ func NewYAML(input []byte) (*Config, error) {
 	for _, detectorConfig := range messages.Detectors {
 		detector, err := custom_detectors.NewWebhookCustomRegex(detectorConfig)
 		if err != nil {
-			return nil, err
+			log.Errorf(context.Background(), "Error creating detector: %v", err.Error())
+			continue
 		}
 		detectors = append(detectors, detector)
 	}
