@@ -3,11 +3,9 @@ package engine
 import (
 	"runtime"
 
-	"github.com/go-errors/errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
@@ -17,7 +15,9 @@ import (
 // ScanFileSystem scans a given file system.
 func (e *Engine) ScanFileSystem(ctx context.Context, c sources.FilesystemConfig) error {
 	connection := &sourcespb.Filesystem{
-		Paths: c.Paths,
+		Paths:            c.Paths,
+		IncludePathsFile: c.IncludePathsFile,
+		ExcludePathsFile: c.ExcludePathsFile,
 	}
 	var conn anypb.Any
 	err := anypb.MarshalFrom(&conn, connection, proto.MarshalOptions{})
@@ -26,25 +26,13 @@ func (e *Engine) ScanFileSystem(ctx context.Context, c sources.FilesystemConfig)
 		return err
 	}
 
-	fileSystemSource := filesystem.Source{}
+	sourceName := "trufflehog - filesystem"
+	sourceID, jobID, _ := e.sourceManager.GetIDs(ctx, sourceName, filesystem.SourceType)
 
-	ctx = context.WithValues(ctx,
-		"source_type", fileSystemSource.Type().String(),
-		"source_name", "filesystem",
-	)
-	err = fileSystemSource.Init(ctx, "trufflehog - filesystem", 0, int64(sourcespb.SourceType_SOURCE_TYPE_FILESYSTEM), true, &conn, runtime.NumCPU())
-	if err != nil {
-		return errors.WrapPrefix(err, "could not init filesystem source", 0)
+	fileSystemSource := &filesystem.Source{}
+	if err := fileSystemSource.Init(ctx, sourceName, jobID, sourceID, true, &conn, runtime.NumCPU()); err != nil {
+		return err
 	}
-	fileSystemSource.WithFilter(c.Filter)
-	e.sourcesWg.Add(1)
-	go func() {
-		defer common.RecoverWithExit(ctx)
-		defer e.sourcesWg.Done()
-		err := fileSystemSource.Chunks(ctx, e.ChunksChan())
-		if err != nil {
-			ctx.Logger().Error(err, "error scanning filesystem")
-		}
-	}()
-	return nil
+	_, err = e.sourceManager.Run(ctx, sourceName, fileSystemSource)
+	return err
 }

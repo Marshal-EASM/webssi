@@ -44,6 +44,16 @@ message CircleCI {
   string email = 7;
 }
 
+message TravisCI {
+  string username = 2;
+  string repository = 3;
+  string build_number = 4;
+  string job_number  = 5;
+  string link = 6;
+  bool public = 7;
+}
+
+
 message Confluence {
   string page = 1;
   string space = 2;
@@ -55,13 +65,11 @@ message Confluence {
   string file = 8;
 }
 
-message Dockerhub {
+message Docker {
   string file = 1;
   string image = 2;
   string layer = 3;
   string tag = 4;
-  string link = 5;
-  string email = 6;
 }
 
 message ECR {
@@ -78,6 +86,7 @@ message Filesystem {
   string file = 1;
   string link = 2;
   string email = 3;
+  int64 line = 4;
 }
 
 message Git {
@@ -109,6 +118,9 @@ message Gitlab {
   string repository = 5;
   string timestamp = 6;
   int64 line = 7;
+  int64 project_id = 8;
+  string project_name = 9;
+  string project_owner = 10;
 }
 
 message GCS {
@@ -226,9 +238,11 @@ message Syslog {
   string facility = 6;
 }
 
-message PublicEventMonitoring {
+message Forager {
   oneof metadata {
     Github github = 1;
+    NPM npm = 2;
+    PyPi pypi = 3;
   }
 }
 
@@ -249,6 +263,39 @@ message GoogleDrive {
   string timestamp = 4;
   bool shared = 5;
   string last_modified_by = 6;
+  string path = 7;
+}
+
+message AzureRepos {
+  string link = 1;
+  string username = 2;
+  string repository = 3;
+  string commit = 4;
+  string email = 5;
+  string file = 6;
+  string timestamp = 7;
+  int64 line = 8;
+  Visibility visibility = 9;
+  string project = 10;
+  string organization = 11;
+}
+
+message Postman {
+  string link = 1;
+  string workspace_uuid = 2;
+  string workspace_name = 3;
+  string globals_id = 4;
+  string collection_id = 5;
+  string collection_name = 6;
+  string environment_id = 7;
+  string environment_name = 8;
+  string request_id =  9;
+  string request_name = 10;
+  string folder_id = 11;
+  string folder_name = 12;
+  string field_type = 13;
+  string field_name = 14;
+  string variable_type = 15;
 }
 
 message MetaData {
@@ -257,7 +304,7 @@ message MetaData {
     Bitbucket bitbucket = 2;
     CircleCI circleci = 3;
     Confluence confluence = 4;
-    Dockerhub dockerhub = 5;
+    Docker docker = 5;
     ECR ecr = 6;
     GCS gcs = 7;
     Github github = 8;
@@ -276,8 +323,11 @@ message MetaData {
     Teams teams = 21;
     Artifactory artifactory = 22;
     Syslog syslog = 23;
-    PublicEventMonitoring publicEventMonitoring = 24;
+    Forager forager = 24;
     SharePoint sharepoint = 25;
     GoogleDrive googleDrive = 26;
+    AzureRepos azureRepos = 27;
+    TravisCI travisCI = 28;
+    Postman postman = 29;
   }
 }

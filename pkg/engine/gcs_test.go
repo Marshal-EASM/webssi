@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/decoders"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 )
 
@@ -55,10 +58,31 @@ func TestScanGCS(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			e := &Engine{}
-			err := e.ScanGCS(context.Background(), test.gcsConfig)
+			ctx, cancel := context.WithCancel(context.TODO())
+			defer cancel()
+
+			e, err := Start(ctx,
+				WithConcurrency(1),
+				WithDecoders(decoders.DefaultDecoders()...),
+				WithDetectors(DefaultDetectors()...),
+				WithVerify(false),
+			)
+			assert.Nil(t, err)
+
+			go func() {
+				resultCount := 0
+				for range e.ResultsChan() {
+					resultCount++
+				}
+			}()
+
+			err = e.ScanGCS(ctx, test.gcsConfig)
 			if err != nil && !test.wantErr && !strings.Contains(err.Error(), "googleapi: Error 400: Bad Request") {
 				t.Errorf("ScanGCS() got: %v, want: %v", err, nil)
+				return
+			}
+			if err := e.Finish(ctx); err != nil && !test.wantErr && !strings.Contains(err.Error(), "googleapi: Error 400: Bad Request") {
+				t.Errorf("Finish() got: %v, want: %v", err, nil)
 				return
 			}
 

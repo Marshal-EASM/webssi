@@ -16,6 +16,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/sourcestest"
 )
 
 func TestSource_Scan(t *testing.T) {
@@ -151,44 +152,6 @@ func TestSource_Scan(t *testing.T) {
 	}
 }
 
-func Test_generateLink(t *testing.T) {
-	type args struct {
-		repo   string
-		commit string
-		file   string
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			name: "test link gen",
-			args: args{
-				repo:   "https://github.com/trufflesec-julian/confluence-go-api.git",
-				commit: "047b4a2ba42fc5b6c0bd535c5307434a666db5ec",
-				file:   ".gitignore",
-			},
-			want: "https://github.com/trufflesec-julian/confluence-go-api/blob/047b4a2ba42fc5b6c0bd535c5307434a666db5ec/.gitignore",
-		},
-		{
-			name: "test link gen - no file",
-			args: args{
-				repo:   "https://github.com/trufflesec-julian/confluence-go-api.git",
-				commit: "047b4a2ba42fc5b6c0bd535c5307434a666db5ec",
-			},
-			want: "https://github.com/trufflesec-julian/confluence-go-api/commit/047b4a2ba42fc5b6c0bd535c5307434a666db5ec",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := GenerateLink(tt.args.repo, tt.args.commit, tt.args.file); got != tt.want {
-				t.Errorf("generateLink() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 // We ran into an issue where upgrading a dependency caused the git patch chunking to break
 // So this test exists to make sure that when something changes, we know about it.
 func TestSource_Chunks_Integration(t *testing.T) {
@@ -226,7 +189,7 @@ func TestSource_Chunks_Integration(t *testing.T) {
 				"ce62d79908803153ef6e145e042d3e80488ef747-bump": {B: []byte("\n")},
 				// Normally we might expect to see this commit, and we may in the future.
 				// But at the moment we're ignoring any commit unless it contains at least one non-space character.
-				"27fbead3bf883cdb7de9d7825ed401f28f9398f1-slack": {B: []byte("\n\n\n\nyup, just did that\n\ngithub_lol: \"ffc7e0f9400fb6300167009e42d2f842cd7956e2\"\n\noh, goodness. there's another one!\n")},
+				"27fbead3bf883cdb7de9d7825ed401f28f9398f1-slack": {B: []byte("\n\n\nyup, just did that\n\ngithub_lol: \"ffc7e0f9400fb6300167009e42d2f842cd7956e2\"\n\noh, goodness. there's another one!\n")},
 				"8afb0ecd4998b1179e428db5ebbcdc8221214432-slack": {B: []byte("oops might drop a slack token here\n\ngithub_secret=\"369963c1434c377428ca8531fbc46c0c43d037a0\"\n\nyup, just did that\n"), Multi: true},
 				"8fe6f04ef1839e3fc54b5147e3d0e0b7ab971bd5-aws":   {B: []byte("blah blaj\n\nthis is the secret: AKIA2E0A8F3B244C9986\n\nokay thank you bye\n"), Multi: true},
 				"84e9c75e388ae3e866e121087ea2dd45a71068f2-aws":   {B: []byte("\n\nthis is the secret: [Default]\nAccess key Id: AKIAILE3JG6KMS3HZGCA\nSecret Access Key: 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\n\nokay thank you bye\n"), Multi: false},
@@ -274,7 +237,7 @@ func TestSource_Chunks_Integration(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
-				err = s.git.ScanRepo(ctx, repo, repoPath, &tt.scanOptions, chunksCh)
+				err = s.git.ScanRepo(ctx, repo, repoPath, &tt.scanOptions, sources.ChanReporter{Ch: chunksCh})
 				if err != nil {
 					panic(err)
 				}
@@ -529,7 +492,7 @@ func TestGitURLParse(t *testing.T) {
 			"ssh",
 		},
 	} {
-		u, err := gitURLParse(tt.url)
+		u, err := GitURLParse(tt.url)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -541,4 +504,74 @@ func TestGitURLParse(t *testing.T) {
 		assert.Equal(t, tt.path, u.Path)
 		assert.Equal(t, tt.scheme, u.Scheme)
 	}
+}
+
+func TestEnumerate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Setup the connection to test enumeration.
+	units := []string{
+		"foo", "bar", "baz",
+		"/path/to/dir/", "/path/to/another/dir/",
+	}
+	conn, err := anypb.New(&sourcespb.Git{
+		Repositories: units[0:3],
+		Directories:  units[3:],
+	})
+	assert.NoError(t, err)
+
+	// Initialize the source.
+	s := Source{}
+	err = s.Init(ctx, "test enumerate", 0, 0, true, conn, 1)
+	assert.NoError(t, err)
+
+	reporter := sourcestest.TestReporter{}
+	err = s.Enumerate(ctx, &reporter)
+	assert.NoError(t, err)
+
+	assert.Equal(t, len(units), len(reporter.Units))
+	assert.Equal(t, 0, len(reporter.UnitErrs))
+	for _, unit := range reporter.Units {
+		id, _ := unit.SourceUnitID()
+		assert.Contains(t, units, id)
+	}
+	for _, unit := range units[:3] {
+		assert.Contains(t, reporter.Units, SourceUnit{ID: unit, Kind: UnitRepo})
+	}
+	for _, unit := range units[3:] {
+		assert.Contains(t, reporter.Units, SourceUnit{ID: unit, Kind: UnitDir})
+	}
+}
+
+func TestChunkUnit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	// Initialize the source.
+	s := Source{}
+	conn, err := anypb.New(&sourcespb.Git{
+		Credential: &sourcespb.Git_Unauthenticated{},
+	})
+	assert.NoError(t, err)
+	err = s.Init(ctx, "test chunk", 0, 0, true, conn, 1)
+	assert.NoError(t, err)
+
+	reporter := sourcestest.TestReporter{}
+
+	// Happy path single repository.
+	err = s.ChunkUnit(ctx, SourceUnit{
+		ID:   "https://github.com/dustin-decker/secretsandstuff.git",
+		Kind: UnitRepo,
+	}, &reporter)
+	assert.NoError(t, err)
+
+	// Error path.
+	err = s.ChunkUnit(ctx, SourceUnit{
+		ID:   "/file/not/found",
+		Kind: UnitDir,
+	}, &reporter)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 11, len(reporter.Chunks))
+	assert.Equal(t, 1, len(reporter.ChunkErrs))
 }

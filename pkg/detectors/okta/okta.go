@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
+
+	regexp "github.com/wasilibs/go-re2"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
@@ -19,15 +20,15 @@ type Scanner struct{}
 var _ detectors.Detector = (*Scanner)(nil)
 
 var (
-	domainPat = regexp.MustCompile(`[a-z0-9-]{1,40}\.okta(?:preview|-emea){0,1}\.com`)
-	tokenPat  = regexp.MustCompile(`00[a-zA-Z0-9_-]{40}`)
+	domainPat = regexp.MustCompile(`\b[a-z0-9-]{1,40}\.okta(?:preview|-emea){0,1}\.com\b`)
+	tokenPat  = regexp.MustCompile(`\b00[a-zA-Z0-9_-]{40}\b`)
 	// TODO: Oauth client secrets
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"okta"}
+	return []string{".okta"}
 }
 
 // FromData will find and optionally verify Okta secrets in a given set of bytes.
@@ -63,7 +64,7 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 
 				resp, err := common.SaneHttpClient().Do(req)
 				if err != nil {
-					return results, err
+					continue
 				}
 				defer resp.Body.Close()
 				if resp.StatusCode >= 200 && resp.StatusCode < 300 {

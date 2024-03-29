@@ -121,6 +121,8 @@ func (m *LocalSource) validate(all bool) error {
 		}
 	}
 
+	// no validation rules for ScanPeriod
+
 	if len(errors) > 0 {
 		return LocalSourceMultiError(errors)
 	}
@@ -197,6 +199,186 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = LocalSourceValidationError{}
+
+// Validate checks the field values on Artifactory with the rules defined in
+// the proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *Artifactory) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on Artifactory with the rules defined in
+// the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in ArtifactoryMultiError, or
+// nil if none found.
+func (m *Artifactory) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *Artifactory) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if _, err := url.Parse(m.GetEndpoint()); err != nil {
+		err = ArtifactoryValidationError{
+			field:  "Endpoint",
+			reason: "value must be a valid URI",
+			cause:  err,
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	switch m.Credential.(type) {
+
+	case *Artifactory_BasicAuth:
+
+		if all {
+			switch v := interface{}(m.GetBasicAuth()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, ArtifactoryValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, ArtifactoryValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetBasicAuth()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ArtifactoryValidationError{
+					field:  "BasicAuth",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *Artifactory_AccessToken:
+		// no validation rules for AccessToken
+
+	case *Artifactory_Unauthenticated:
+
+		if all {
+			switch v := interface{}(m.GetUnauthenticated()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, ArtifactoryValidationError{
+						field:  "Unauthenticated",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, ArtifactoryValidationError{
+						field:  "Unauthenticated",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetUnauthenticated()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ArtifactoryValidationError{
+					field:  "Unauthenticated",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return ArtifactoryMultiError(errors)
+	}
+
+	return nil
+}
+
+// ArtifactoryMultiError is an error wrapping multiple validation errors
+// returned by Artifactory.ValidateAll() if the designated constraints aren't met.
+type ArtifactoryMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m ArtifactoryMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m ArtifactoryMultiError) AllErrors() []error { return m }
+
+// ArtifactoryValidationError is the validation error returned by
+// Artifactory.Validate if the designated constraints aren't met.
+type ArtifactoryValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e ArtifactoryValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e ArtifactoryValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e ArtifactoryValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e ArtifactoryValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e ArtifactoryValidationError) ErrorName() string { return "ArtifactoryValidationError" }
+
+// Error satisfies the builtin error interface
+func (e ArtifactoryValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sArtifactory.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = ArtifactoryValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = ArtifactoryValidationError{}
 
 // Validate checks the field values on AzureStorage with the rules defined in
 // the proto definition for this message. If any rules are violated, the first
@@ -402,6 +584,10 @@ func (m *Bitbucket) validate(all bool) error {
 		}
 		errors = append(errors, err)
 	}
+
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
 
 	switch m.Credential.(type) {
 
@@ -667,6 +853,124 @@ var _ interface {
 	ErrorName() string
 } = CircleCIValidationError{}
 
+// Validate checks the field values on TravisCI with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *TravisCI) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on TravisCI with the rules defined in
+// the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in TravisCIMultiError, or nil
+// if none found.
+func (m *TravisCI) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *TravisCI) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if _, err := url.Parse(m.GetEndpoint()); err != nil {
+		err = TravisCIValidationError{
+			field:  "Endpoint",
+			reason: "value must be a valid URI",
+			cause:  err,
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	switch m.Credential.(type) {
+
+	case *TravisCI_Token:
+		// no validation rules for Token
+
+	}
+
+	if len(errors) > 0 {
+		return TravisCIMultiError(errors)
+	}
+
+	return nil
+}
+
+// TravisCIMultiError is an error wrapping multiple validation errors returned
+// by TravisCI.ValidateAll() if the designated constraints aren't met.
+type TravisCIMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m TravisCIMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m TravisCIMultiError) AllErrors() []error { return m }
+
+// TravisCIValidationError is the validation error returned by
+// TravisCI.Validate if the designated constraints aren't met.
+type TravisCIValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e TravisCIValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e TravisCIValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e TravisCIValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e TravisCIValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e TravisCIValidationError) ErrorName() string { return "TravisCIValidationError" }
+
+// Error satisfies the builtin error interface
+func (e TravisCIValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sTravisCI.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = TravisCIValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = TravisCIValidationError{}
+
 // Validate checks the field values on Confluence with the rules defined in the
 // proto definition for this message. If any rules are violated, the first
 // error encountered is returned, or nil if there are no violations.
@@ -855,22 +1159,21 @@ var _ interface {
 	ErrorName() string
 } = ConfluenceValidationError{}
 
-// Validate checks the field values on DockerHub with the rules defined in the
+// Validate checks the field values on Docker with the rules defined in the
 // proto definition for this message. If any rules are violated, the first
 // error encountered is returned, or nil if there are no violations.
-func (m *DockerHub) Validate() error {
+func (m *Docker) Validate() error {
 	return m.validate(false)
 }
 
-// ValidateAll checks the field values on DockerHub with the rules defined in
-// the proto definition for this message. If any rules are violated, the
-// result is a list of violation errors wrapped in DockerHubMultiError, or nil
-// if none found.
-func (m *DockerHub) ValidateAll() error {
+// ValidateAll checks the field values on Docker with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in DockerMultiError, or nil if none found.
+func (m *Docker) ValidateAll() error {
 	return m.validate(true)
 }
 
-func (m *DockerHub) validate(all bool) error {
+func (m *Docker) validate(all bool) error {
 	if m == nil {
 		return nil
 	}
@@ -879,13 +1182,13 @@ func (m *DockerHub) validate(all bool) error {
 
 	switch m.Credential.(type) {
 
-	case *DockerHub_Unauthenticated:
+	case *Docker_Unauthenticated:
 
 		if all {
 			switch v := interface{}(m.GetUnauthenticated()).(type) {
 			case interface{ ValidateAll() error }:
 				if err := v.ValidateAll(); err != nil {
-					errors = append(errors, DockerHubValidationError{
+					errors = append(errors, DockerValidationError{
 						field:  "Unauthenticated",
 						reason: "embedded message failed validation",
 						cause:  err,
@@ -893,7 +1196,7 @@ func (m *DockerHub) validate(all bool) error {
 				}
 			case interface{ Validate() error }:
 				if err := v.Validate(); err != nil {
-					errors = append(errors, DockerHubValidationError{
+					errors = append(errors, DockerValidationError{
 						field:  "Unauthenticated",
 						reason: "embedded message failed validation",
 						cause:  err,
@@ -902,7 +1205,7 @@ func (m *DockerHub) validate(all bool) error {
 			}
 		} else if v, ok := interface{}(m.GetUnauthenticated()).(interface{ Validate() error }); ok {
 			if err := v.Validate(); err != nil {
-				return DockerHubValidationError{
+				return DockerValidationError{
 					field:  "Unauthenticated",
 					reason: "embedded message failed validation",
 					cause:  err,
@@ -910,21 +1213,58 @@ func (m *DockerHub) validate(all bool) error {
 			}
 		}
 
+	case *Docker_BasicAuth:
+
+		if all {
+			switch v := interface{}(m.GetBasicAuth()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, DockerValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, DockerValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetBasicAuth()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return DockerValidationError{
+					field:  "BasicAuth",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *Docker_BearerToken:
+		// no validation rules for BearerToken
+
+	case *Docker_DockerKeychain:
+		// no validation rules for DockerKeychain
+
 	}
 
 	if len(errors) > 0 {
-		return DockerHubMultiError(errors)
+		return DockerMultiError(errors)
 	}
 
 	return nil
 }
 
-// DockerHubMultiError is an error wrapping multiple validation errors returned
-// by DockerHub.ValidateAll() if the designated constraints aren't met.
-type DockerHubMultiError []error
+// DockerMultiError is an error wrapping multiple validation errors returned by
+// Docker.ValidateAll() if the designated constraints aren't met.
+type DockerMultiError []error
 
 // Error returns a concatenation of all the error messages it wraps.
-func (m DockerHubMultiError) Error() string {
+func (m DockerMultiError) Error() string {
 	var msgs []string
 	for _, err := range m {
 		msgs = append(msgs, err.Error())
@@ -933,11 +1273,11 @@ func (m DockerHubMultiError) Error() string {
 }
 
 // AllErrors returns a list of validation violation errors.
-func (m DockerHubMultiError) AllErrors() []error { return m }
+func (m DockerMultiError) AllErrors() []error { return m }
 
-// DockerHubValidationError is the validation error returned by
-// DockerHub.Validate if the designated constraints aren't met.
-type DockerHubValidationError struct {
+// DockerValidationError is the validation error returned by Docker.Validate if
+// the designated constraints aren't met.
+type DockerValidationError struct {
 	field  string
 	reason string
 	cause  error
@@ -945,22 +1285,22 @@ type DockerHubValidationError struct {
 }
 
 // Field function returns field value.
-func (e DockerHubValidationError) Field() string { return e.field }
+func (e DockerValidationError) Field() string { return e.field }
 
 // Reason function returns reason value.
-func (e DockerHubValidationError) Reason() string { return e.reason }
+func (e DockerValidationError) Reason() string { return e.reason }
 
 // Cause function returns cause value.
-func (e DockerHubValidationError) Cause() error { return e.cause }
+func (e DockerValidationError) Cause() error { return e.cause }
 
 // Key function returns key value.
-func (e DockerHubValidationError) Key() bool { return e.key }
+func (e DockerValidationError) Key() bool { return e.key }
 
 // ErrorName returns error name.
-func (e DockerHubValidationError) ErrorName() string { return "DockerHubValidationError" }
+func (e DockerValidationError) ErrorName() string { return "DockerValidationError" }
 
 // Error satisfies the builtin error interface
-func (e DockerHubValidationError) Error() string {
+func (e DockerValidationError) Error() string {
 	cause := ""
 	if e.cause != nil {
 		cause = fmt.Sprintf(" | caused by: %v", e.cause)
@@ -972,14 +1312,14 @@ func (e DockerHubValidationError) Error() string {
 	}
 
 	return fmt.Sprintf(
-		"invalid %sDockerHub.%s: %s%s",
+		"invalid %sDocker.%s: %s%s",
 		key,
 		e.field,
 		e.reason,
 		cause)
 }
 
-var _ error = DockerHubValidationError{}
+var _ error = DockerValidationError{}
 
 var _ interface {
 	Field() string
@@ -987,7 +1327,7 @@ var _ interface {
 	Key() bool
 	Cause() error
 	ErrorName() string
-} = DockerHubValidationError{}
+} = DockerValidationError{}
 
 // Validate checks the field values on ECR with the rules defined in the proto
 // definition for this message. If any rules are violated, the first error
@@ -1143,6 +1483,10 @@ func (m *Filesystem) validate(all bool) error {
 	}
 
 	var errors []error
+
+	// no validation rules for IncludePathsFile
+
+	// no validation rules for ExcludePathsFile
 
 	if len(errors) > 0 {
 		return FilesystemMultiError(errors)
@@ -1450,6 +1794,26 @@ func (m *Git) validate(all bool) error {
 
 	var errors []error
 
+	// no validation rules for Head
+
+	// no validation rules for Base
+
+	// no validation rules for Bare
+
+	// no validation rules for IncludePathsFile
+
+	// no validation rules for ExcludePathsFile
+
+	// no validation rules for ExcludeGlobs
+
+	// no validation rules for MaxDepth
+
+	// no validation rules for Uri
+
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
+
 	switch m.Credential.(type) {
 
 	case *Git_BasicAuth:
@@ -1657,6 +2021,10 @@ func (m *GitLab) validate(all bool) error {
 		errors = append(errors, err)
 	}
 
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
+
 	switch m.Credential.(type) {
 
 	case *GitLab_Token:
@@ -1844,6 +2212,18 @@ func (m *GitHub) validate(all bool) error {
 
 	// no validation rules for Base
 
+	// no validation rules for IncludePullRequestComments
+
+	// no validation rules for IncludeIssueComments
+
+	// no validation rules for IncludeGistComments
+
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
+
+	// no validation rules for IncludeWikis
+
 	switch m.Credential.(type) {
 
 	case *GitHub_GithubApp:
@@ -1905,6 +2285,37 @@ func (m *GitHub) validate(all bool) error {
 			if err := v.Validate(); err != nil {
 				return GitHubValidationError{
 					field:  "Unauthenticated",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *GitHub_BasicAuth:
+
+		if all {
+			switch v := interface{}(m.GetBasicAuth()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, GitHubValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, GitHubValidationError{
+						field:  "BasicAuth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetBasicAuth()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return GitHubValidationError{
+					field:  "BasicAuth",
 					reason: "embedded message failed validation",
 					cause:  err,
 				}
@@ -2128,6 +2539,8 @@ func (m *JIRA) validate(all bool) error {
 		}
 		errors = append(errors, err)
 	}
+
+	// no validation rules for InsecureSkipVerifyTls
 
 	switch m.Credential.(type) {
 
@@ -3193,6 +3606,10 @@ func (m *Gerrit) validate(all bool) error {
 		errors = append(errors, err)
 	}
 
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
+
 	switch m.Credential.(type) {
 
 	case *Gerrit_BasicAuth:
@@ -3368,6 +3785,8 @@ func (m *Jenkins) validate(all bool) error {
 		}
 		errors = append(errors, err)
 	}
+
+	// no validation rules for InsecureSkipVerifyTls
 
 	switch m.Credential.(type) {
 
@@ -3691,155 +4110,6 @@ var _ interface {
 	ErrorName() string
 } = TeamsValidationError{}
 
-// Validate checks the field values on Artifactory with the rules defined in
-// the proto definition for this message. If any rules are violated, the first
-// error encountered is returned, or nil if there are no violations.
-func (m *Artifactory) Validate() error {
-	return m.validate(false)
-}
-
-// ValidateAll checks the field values on Artifactory with the rules defined in
-// the proto definition for this message. If any rules are violated, the
-// result is a list of violation errors wrapped in ArtifactoryMultiError, or
-// nil if none found.
-func (m *Artifactory) ValidateAll() error {
-	return m.validate(true)
-}
-
-func (m *Artifactory) validate(all bool) error {
-	if m == nil {
-		return nil
-	}
-
-	var errors []error
-
-	if _, err := url.Parse(m.GetEndpoint()); err != nil {
-		err = ArtifactoryValidationError{
-			field:  "Endpoint",
-			reason: "value must be a valid URI",
-			cause:  err,
-		}
-		if !all {
-			return err
-		}
-		errors = append(errors, err)
-	}
-
-	switch m.Credential.(type) {
-
-	case *Artifactory_BasicAuth:
-
-		if all {
-			switch v := interface{}(m.GetBasicAuth()).(type) {
-			case interface{ ValidateAll() error }:
-				if err := v.ValidateAll(); err != nil {
-					errors = append(errors, ArtifactoryValidationError{
-						field:  "BasicAuth",
-						reason: "embedded message failed validation",
-						cause:  err,
-					})
-				}
-			case interface{ Validate() error }:
-				if err := v.Validate(); err != nil {
-					errors = append(errors, ArtifactoryValidationError{
-						field:  "BasicAuth",
-						reason: "embedded message failed validation",
-						cause:  err,
-					})
-				}
-			}
-		} else if v, ok := interface{}(m.GetBasicAuth()).(interface{ Validate() error }); ok {
-			if err := v.Validate(); err != nil {
-				return ArtifactoryValidationError{
-					field:  "BasicAuth",
-					reason: "embedded message failed validation",
-					cause:  err,
-				}
-			}
-		}
-
-	case *Artifactory_AccessToken:
-		// no validation rules for AccessToken
-
-	}
-
-	if len(errors) > 0 {
-		return ArtifactoryMultiError(errors)
-	}
-
-	return nil
-}
-
-// ArtifactoryMultiError is an error wrapping multiple validation errors
-// returned by Artifactory.ValidateAll() if the designated constraints aren't met.
-type ArtifactoryMultiError []error
-
-// Error returns a concatenation of all the error messages it wraps.
-func (m ArtifactoryMultiError) Error() string {
-	var msgs []string
-	for _, err := range m {
-		msgs = append(msgs, err.Error())
-	}
-	return strings.Join(msgs, "; ")
-}
-
-// AllErrors returns a list of validation violation errors.
-func (m ArtifactoryMultiError) AllErrors() []error { return m }
-
-// ArtifactoryValidationError is the validation error returned by
-// Artifactory.Validate if the designated constraints aren't met.
-type ArtifactoryValidationError struct {
-	field  string
-	reason string
-	cause  error
-	key    bool
-}
-
-// Field function returns field value.
-func (e ArtifactoryValidationError) Field() string { return e.field }
-
-// Reason function returns reason value.
-func (e ArtifactoryValidationError) Reason() string { return e.reason }
-
-// Cause function returns cause value.
-func (e ArtifactoryValidationError) Cause() error { return e.cause }
-
-// Key function returns key value.
-func (e ArtifactoryValidationError) Key() bool { return e.key }
-
-// ErrorName returns error name.
-func (e ArtifactoryValidationError) ErrorName() string { return "ArtifactoryValidationError" }
-
-// Error satisfies the builtin error interface
-func (e ArtifactoryValidationError) Error() string {
-	cause := ""
-	if e.cause != nil {
-		cause = fmt.Sprintf(" | caused by: %v", e.cause)
-	}
-
-	key := ""
-	if e.key {
-		key = "key for "
-	}
-
-	return fmt.Sprintf(
-		"invalid %sArtifactory.%s: %s%s",
-		key,
-		e.field,
-		e.reason,
-		cause)
-}
-
-var _ error = ArtifactoryValidationError{}
-
-var _ interface {
-	Field() string
-	Reason() string
-	Key() bool
-	Cause() error
-	ErrorName() string
-} = ArtifactoryValidationError{}
-
 // Validate checks the field values on Syslog with the rules defined in the
 // proto definition for this message. If any rules are violated, the first
 // error encountered is returned, or nil if there are no violations.
@@ -3948,29 +4218,26 @@ var _ interface {
 	ErrorName() string
 } = SyslogValidationError{}
 
-// Validate checks the field values on PublicEventMonitoring with the rules
-// defined in the proto definition for this message. If any rules are
-// violated, the first error encountered is returned, or nil if there are no violations.
-func (m *PublicEventMonitoring) Validate() error {
+// Validate checks the field values on Forager with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *Forager) Validate() error {
 	return m.validate(false)
 }
 
-// ValidateAll checks the field values on PublicEventMonitoring with the rules
-// defined in the proto definition for this message. If any rules are
-// violated, the result is a list of violation errors wrapped in
-// PublicEventMonitoringMultiError, or nil if none found.
-func (m *PublicEventMonitoring) ValidateAll() error {
+// ValidateAll checks the field values on Forager with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in ForagerMultiError, or nil if none found.
+func (m *Forager) ValidateAll() error {
 	return m.validate(true)
 }
 
-func (m *PublicEventMonitoring) validate(all bool) error {
+func (m *Forager) validate(all bool) error {
 	if m == nil {
 		return nil
 	}
 
 	var errors []error
-
-	// no validation rules for Domain
 
 	// no validation rules for MaxDepth
 
@@ -3978,7 +4245,7 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 		switch v := interface{}(m.GetSince()).(type) {
 		case interface{ ValidateAll() error }:
 			if err := v.ValidateAll(); err != nil {
-				errors = append(errors, PublicEventMonitoringValidationError{
+				errors = append(errors, ForagerValidationError{
 					field:  "Since",
 					reason: "embedded message failed validation",
 					cause:  err,
@@ -3986,7 +4253,7 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 			}
 		case interface{ Validate() error }:
 			if err := v.Validate(); err != nil {
-				errors = append(errors, PublicEventMonitoringValidationError{
+				errors = append(errors, ForagerValidationError{
 					field:  "Since",
 					reason: "embedded message failed validation",
 					cause:  err,
@@ -3995,7 +4262,7 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 		}
 	} else if v, ok := interface{}(m.GetSince()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
-			return PublicEventMonitoringValidationError{
+			return ForagerValidationError{
 				field:  "Since",
 				reason: "embedded message failed validation",
 				cause:  err,
@@ -4005,13 +4272,13 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 
 	switch m.Credential.(type) {
 
-	case *PublicEventMonitoring_Unauthenticated:
+	case *Forager_Unauthenticated:
 
 		if all {
 			switch v := interface{}(m.GetUnauthenticated()).(type) {
 			case interface{ ValidateAll() error }:
 				if err := v.ValidateAll(); err != nil {
-					errors = append(errors, PublicEventMonitoringValidationError{
+					errors = append(errors, ForagerValidationError{
 						field:  "Unauthenticated",
 						reason: "embedded message failed validation",
 						cause:  err,
@@ -4019,7 +4286,7 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 				}
 			case interface{ Validate() error }:
 				if err := v.Validate(); err != nil {
-					errors = append(errors, PublicEventMonitoringValidationError{
+					errors = append(errors, ForagerValidationError{
 						field:  "Unauthenticated",
 						reason: "embedded message failed validation",
 						cause:  err,
@@ -4028,7 +4295,7 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 			}
 		} else if v, ok := interface{}(m.GetUnauthenticated()).(interface{ Validate() error }); ok {
 			if err := v.Validate(); err != nil {
-				return PublicEventMonitoringValidationError{
+				return ForagerValidationError{
 					field:  "Unauthenticated",
 					reason: "embedded message failed validation",
 					cause:  err,
@@ -4039,19 +4306,18 @@ func (m *PublicEventMonitoring) validate(all bool) error {
 	}
 
 	if len(errors) > 0 {
-		return PublicEventMonitoringMultiError(errors)
+		return ForagerMultiError(errors)
 	}
 
 	return nil
 }
 
-// PublicEventMonitoringMultiError is an error wrapping multiple validation
-// errors returned by PublicEventMonitoring.ValidateAll() if the designated
-// constraints aren't met.
-type PublicEventMonitoringMultiError []error
+// ForagerMultiError is an error wrapping multiple validation errors returned
+// by Forager.ValidateAll() if the designated constraints aren't met.
+type ForagerMultiError []error
 
 // Error returns a concatenation of all the error messages it wraps.
-func (m PublicEventMonitoringMultiError) Error() string {
+func (m ForagerMultiError) Error() string {
 	var msgs []string
 	for _, err := range m {
 		msgs = append(msgs, err.Error())
@@ -4060,11 +4326,11 @@ func (m PublicEventMonitoringMultiError) Error() string {
 }
 
 // AllErrors returns a list of validation violation errors.
-func (m PublicEventMonitoringMultiError) AllErrors() []error { return m }
+func (m ForagerMultiError) AllErrors() []error { return m }
 
-// PublicEventMonitoringValidationError is the validation error returned by
-// PublicEventMonitoring.Validate if the designated constraints aren't met.
-type PublicEventMonitoringValidationError struct {
+// ForagerValidationError is the validation error returned by Forager.Validate
+// if the designated constraints aren't met.
+type ForagerValidationError struct {
 	field  string
 	reason string
 	cause  error
@@ -4072,24 +4338,22 @@ type PublicEventMonitoringValidationError struct {
 }
 
 // Field function returns field value.
-func (e PublicEventMonitoringValidationError) Field() string { return e.field }
+func (e ForagerValidationError) Field() string { return e.field }
 
 // Reason function returns reason value.
-func (e PublicEventMonitoringValidationError) Reason() string { return e.reason }
+func (e ForagerValidationError) Reason() string { return e.reason }
 
 // Cause function returns cause value.
-func (e PublicEventMonitoringValidationError) Cause() error { return e.cause }
+func (e ForagerValidationError) Cause() error { return e.cause }
 
 // Key function returns key value.
-func (e PublicEventMonitoringValidationError) Key() bool { return e.key }
+func (e ForagerValidationError) Key() bool { return e.key }
 
 // ErrorName returns error name.
-func (e PublicEventMonitoringValidationError) ErrorName() string {
-	return "PublicEventMonitoringValidationError"
-}
+func (e ForagerValidationError) ErrorName() string { return "ForagerValidationError" }
 
 // Error satisfies the builtin error interface
-func (e PublicEventMonitoringValidationError) Error() string {
+func (e ForagerValidationError) Error() string {
 	cause := ""
 	if e.cause != nil {
 		cause = fmt.Sprintf(" | caused by: %v", e.cause)
@@ -4101,14 +4365,14 @@ func (e PublicEventMonitoringValidationError) Error() string {
 	}
 
 	return fmt.Sprintf(
-		"invalid %sPublicEventMonitoring.%s: %s%s",
+		"invalid %sForager.%s: %s%s",
 		key,
 		e.field,
 		e.reason,
 		cause)
 }
 
-var _ error = PublicEventMonitoringValidationError{}
+var _ error = ForagerValidationError{}
 
 var _ interface {
 	Field() string
@@ -4116,7 +4380,7 @@ var _ interface {
 	Key() bool
 	Cause() error
 	ErrorName() string
-} = PublicEventMonitoringValidationError{}
+} = ForagerValidationError{}
 
 // Validate checks the field values on SlackRealtime with the rules defined in
 // the proto definition for this message. If any rules are violated, the first
@@ -4388,3 +4652,294 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = SharepointValidationError{}
+
+// Validate checks the field values on AzureRepos with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *AzureRepos) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on AzureRepos with the rules defined in
+// the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in AzureReposMultiError, or
+// nil if none found.
+func (m *AzureRepos) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *AzureRepos) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if _, err := url.Parse(m.GetEndpoint()); err != nil {
+		err = AzureReposValidationError{
+			field:  "Endpoint",
+			reason: "value must be a valid URI",
+			cause:  err,
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	// no validation rules for IncludeForks
+
+	// no validation rules for SkipBinaries
+
+	// no validation rules for SkipArchives
+
+	switch m.Credential.(type) {
+
+	case *AzureRepos_Token:
+		// no validation rules for Token
+
+	case *AzureRepos_Oauth:
+
+		if all {
+			switch v := interface{}(m.GetOauth()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, AzureReposValidationError{
+						field:  "Oauth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, AzureReposValidationError{
+						field:  "Oauth",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetOauth()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return AzureReposValidationError{
+					field:  "Oauth",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return AzureReposMultiError(errors)
+	}
+
+	return nil
+}
+
+// AzureReposMultiError is an error wrapping multiple validation errors
+// returned by AzureRepos.ValidateAll() if the designated constraints aren't met.
+type AzureReposMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m AzureReposMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m AzureReposMultiError) AllErrors() []error { return m }
+
+// AzureReposValidationError is the validation error returned by
+// AzureRepos.Validate if the designated constraints aren't met.
+type AzureReposValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e AzureReposValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e AzureReposValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e AzureReposValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e AzureReposValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e AzureReposValidationError) ErrorName() string { return "AzureReposValidationError" }
+
+// Error satisfies the builtin error interface
+func (e AzureReposValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sAzureRepos.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = AzureReposValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = AzureReposValidationError{}
+
+// Validate checks the field values on Postman with the rules defined in the
+// proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *Postman) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on Postman with the rules defined in the
+// proto definition for this message. If any rules are violated, the result is
+// a list of violation errors wrapped in PostmanMultiError, or nil if none found.
+func (m *Postman) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *Postman) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	switch m.Credential.(type) {
+
+	case *Postman_Unauthenticated:
+
+		if all {
+			switch v := interface{}(m.GetUnauthenticated()).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, PostmanValidationError{
+						field:  "Unauthenticated",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, PostmanValidationError{
+						field:  "Unauthenticated",
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(m.GetUnauthenticated()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return PostmanValidationError{
+					field:  "Unauthenticated",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *Postman_Token:
+		// no validation rules for Token
+
+	}
+
+	if len(errors) > 0 {
+		return PostmanMultiError(errors)
+	}
+
+	return nil
+}
+
+// PostmanMultiError is an error wrapping multiple validation errors returned
+// by Postman.ValidateAll() if the designated constraints aren't met.
+type PostmanMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m PostmanMultiError) Error() string {
+	var msgs []string
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m PostmanMultiError) AllErrors() []error { return m }
+
+// PostmanValidationError is the validation error returned by Postman.Validate
+// if the designated constraints aren't met.
+type PostmanValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e PostmanValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e PostmanValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e PostmanValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e PostmanValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e PostmanValidationError) ErrorName() string { return "PostmanValidationError" }
+
+// Error satisfies the builtin error interface
+func (e PostmanValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sPostman.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = PostmanValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = PostmanValidationError{}

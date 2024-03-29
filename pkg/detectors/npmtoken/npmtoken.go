@@ -3,8 +3,8 @@ package npmtoken
 import (
 	"context"
 	"fmt"
+	regexp "github.com/wasilibs/go-re2"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
@@ -36,7 +36,6 @@ func (s Scanner) Keywords() []string {
 // FromData will find and optionally verify NpmToken secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
-
 	matches := keyPat.FindAllStringSubmatch(dataStr, -1)
 	for _, match := range matches {
 		if len(match) != 2 {
@@ -47,6 +46,9 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		s1 := detectors.Result{
 			DetectorType: detectorspb.DetectorType_NpmToken,
 			Raw:          []byte(resMatch),
+		}
+		s1.ExtraData = map[string]string{
+			"rotation_guide": "https://howtorotate.com/docs/tutorials/npm/",
 		}
 
 		if verify {

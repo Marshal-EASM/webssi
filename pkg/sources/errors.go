@@ -1,7 +1,8 @@
 package sources
 
 import (
-	"fmt"
+	"errors"
+	"strings"
 	"sync"
 )
 
@@ -19,6 +20,10 @@ func NewScanErrors() *ScanErrors {
 
 // Add an error to the collection in a thread-safe manner.
 func (s *ScanErrors) Add(err error) {
+	if err == nil {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.errors = append(s.errors, err)
@@ -32,5 +37,23 @@ func (s *ScanErrors) Count() uint64 {
 }
 
 func (s *ScanErrors) String() string {
-	return fmt.Sprintf("%v", s.errors)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, err := range s.errors {
+		sb.WriteString(`"` + err.Error() + `"`)
+		if i < len(s.errors)-1 {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+func (s *ScanErrors) Errors() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return errors.Join(s.errors...)
 }

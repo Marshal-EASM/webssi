@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/kylelemons/godebug/pretty"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
@@ -65,22 +67,6 @@ func TestJdbc_FromChunk(t *testing.T) {
 				verify: false,
 			},
 			want:    nil,
-			wantErr: false,
-		},
-		{
-			name: "sqlite unverified",
-			args: args{
-				ctx:    context.Background(),
-				data:   []byte("jdbc:sqlite::memory:"),
-				verify: true,
-			},
-			want: []detectors.Result{
-				{
-					DetectorType: detectorspb.DetectorType_JDBC,
-					Verified:     false,
-					Redacted:     "jdbc:sqlite::memory:",
-				},
-			},
 			wantErr: false,
 		},
 		{
@@ -207,11 +193,57 @@ func TestJdbc_FromDataWithIgnorePattern(t *testing.T) {
 	}
 }
 
+func TestJdbc_Redact(t *testing.T) {
+	tests := []struct {
+		name string
+		conn string
+		want string
+	}{
+		{
+			name: "basic auth'",
+			conn: "//user:secret@tcp(127.0.0.1:3306)/",
+			want: "//user:******@tcp(127.0.0.1:3306)/",
+		},
+		{
+			name: "basic auth including raw string 'pass'",
+			conn: "//wrongUser:wrongPass@tcp(127.0.0.1:3306)/",
+			want: "//wrongUser:*********@tcp(127.0.0.1:3306)/",
+		},
+		{
+			name: "basic auth including raw string 'pass' with unfortunate db name",
+			conn: "//wrongUser:wrongPass@tcp(127.0.0.1:3306)/passwords",
+			want: "//wrongUser:*********@tcp(127.0.0.1:3306)/passwords",
+		},
+		{
+			name: "url param-style",
+			conn: "jdbc:postgresql://localhost:5432/foo?sslmode=disable&password=p@ssw04d",
+			want: "jdbc:postgresql://localhost:5432/foo?sslmode=disable&password=********",
+		},
+		{
+			name: "odbc-style without server",
+			conn: "//odbc:server=localhost;user id=sa;database=master;password=/p?s=sw&rd",
+			want: "//odbc:server=localhost;user id=sa;database=master;password=**********",
+		},
+		{
+			name: "odbc-style with server",
+			conn: "jdbc:sqlserver://a.b.c.net;database=database-name;spring.datasource.password=super-secret-password",
+			want: "jdbc:sqlserver://a.b.c.net;database=database-name;spring.datasource.password=*********************",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tryRedactAnonymousJDBC(tt.conn)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func BenchmarkFromData(benchmark *testing.B) {
 	ctx := context.Background()
 	s := Scanner{}
 	for name, data := range detectors.MustGetBenchmarkData() {
 		benchmark.Run(name, func(b *testing.B) {
+			b.ResetTimer()
 			for n := 0; n < b.N; n++ {
 				_, err := s.FromData(ctx, false, data)
 				if err != nil {

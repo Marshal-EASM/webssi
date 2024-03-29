@@ -1,14 +1,17 @@
 package gcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"regexp"
 	"strings"
+
+	regexp "github.com/wasilibs/go-re2"
+
+	"golang.org/x/oauth2/google"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
-	"golang.org/x/oauth2/google"
 )
 
 type Scanner struct{}
@@ -78,6 +81,11 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		if len(raw) == 0 {
 			raw = []byte(key)
 		}
+		// This is an unprivileged service account used in Kubernetes' tests. It is intentionally public.
+		// https://github.com/kubernetes/kubernetes/blob/10a06602223eab17e02e197d1da591727c756d32/test/e2e_node/runtime_conformance_test.go#L50
+		if bytes.Equal(raw, []byte("image-pulling@authenticated-image-pulling.iam.gserviceaccount.com")) {
+			continue
+		}
 
 		credBytes, _ := json.Marshal(creds)
 
@@ -86,6 +94,11 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 			Raw:          raw,
 			RawV2:        credBytes,
 			Redacted:     creds.ClientEmail,
+		}
+		// Set the RotationGuideURL in the ExtraData
+		s.ExtraData = map[string]string{
+			"rotation_guide": "https://howtorotate.com/docs/tutorials/gcp/",
+			"project":        creds.ProjectID,
 		}
 
 		if verify {
