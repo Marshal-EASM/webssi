@@ -24,6 +24,11 @@ func (p *JSONPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) 
 		return ""
 	}(r.VerificationError())
 
+	detectorName := detectorspb.DetectorType_name[int32(r.DetectorType)]
+	if detectorName == "CustomRegex" {
+		detectorName = r.ExtraData["name"]
+	}
+
 	v := &struct {
 		// SourceMetadata contains source-specific contextual information.
 		SourceMetadata *source_metadatapb.MetaData
@@ -57,7 +62,7 @@ func (p *JSONPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) 
 		SourceType:        r.SourceType,
 		SourceName:        r.SourceName,
 		DetectorType:      r.DetectorType,
-		DetectorName:      detectorspb.DetectorType_name[int32(r.DetectorType)],
+		DetectorName:      detectorName,
 		DecoderName:       r.DecoderType.String(),
 		Verified:          r.Verified,
 		VerificationError: verificationErr,
