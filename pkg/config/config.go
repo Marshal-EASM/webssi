@@ -33,16 +33,16 @@ func NewYAML(input []byte) (*Config, error) {
 		return nil, err
 	}
 	// Convert the structured YAML into detectors.
-	var detectors []detectors.Detector
+	var d []detectors.Detector
 	for _, detectorConfig := range messages.Detectors {
 		detector, err := custom_detectors.NewWebhookCustomRegex(detectorConfig)
 		if err != nil {
 			log.Errorf(context.Background(), "Error creating detector: %v", err.Error())
 			continue
 		}
-		detectors = append(detectors, detector)
+		d = append(d, detector)
 	}
 	return &Config{
-		Detectors: detectors,
+		Detectors: d,
 	}, nil
 }

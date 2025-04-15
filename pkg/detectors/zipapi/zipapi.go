@@ -5,15 +5,18 @@ import (
 	b64 "encoding/base64"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
+
+	regexp "github.com/wasilibs/go-re2"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
 )
 
-type Scanner struct{}
+type Scanner struct {
+	detectors.DefaultMultiPartCredentialProvider
+}
 
 // Ensure the Scanner satisfies the interface at compile time.
 var _ detectors.Detector = (*Scanner)(nil)
@@ -23,7 +26,7 @@ var (
 
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
 	keyPat   = regexp.MustCompile(detectors.PrefixRegex([]string{"zipapi"}) + `\b([0-9a-z]{32})\b`)
-	emailPat = regexp.MustCompile(`\b([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-z]+)\b`)
+	emailPat = regexp.MustCompile(common.EmailPattern)
 	pwordPat = regexp.MustCompile(detectors.PrefixRegex([]string{"zipapi"}) + `\b([a-zA-Z0-9!=@#$%^]{7,})`)
 )
 
@@ -37,35 +40,31 @@ func (s Scanner) Keywords() []string {
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
-	matches := keyPat.FindAllStringSubmatch(dataStr, -1)
-	emailMatches := emailPat.FindAllStringSubmatch(dataStr, -1)
-	pwordMatches := pwordPat.FindAllStringSubmatch(dataStr, -1)
+	uniqueEmailMatches, uniqueKeyMatches, uniquePassMatches := make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
+	for _, match := range emailPat.FindAllStringSubmatch(dataStr, -1) {
+		uniqueEmailMatches[strings.TrimSpace(match[1])] = struct{}{}
+	}
 
-	for _, match := range matches {
-		if len(match) != 2 {
-			continue
-		}
-		resMatch := strings.TrimSpace(match[1])
-		for _, emailMatch := range emailMatches {
-			if len(emailMatch) != 2 {
-				continue
-			}
-			resEmail := strings.TrimSpace(emailMatch[1])
-			for _, pwordMatch := range pwordMatches {
-				if len(pwordMatch) != 2 {
-					continue
-				}
-				resPword := strings.TrimSpace(pwordMatch[1])
+	for _, match := range keyPat.FindAllStringSubmatch(dataStr, -1) {
+		uniqueKeyMatches[strings.TrimSpace(match[1])] = struct{}{}
+	}
 
+	for _, match := range pwordPat.FindAllStringSubmatch(dataStr, -1) {
+		uniquePassMatches[strings.TrimSpace(match[1])] = struct{}{}
+	}
+
+	for keyMatch := range uniqueKeyMatches {
+		for emailMatch := range uniqueEmailMatches {
+			for passMatch := range uniquePassMatches {
 				s1 := detectors.Result{
 					DetectorType: detectorspb.DetectorType_ZipAPI,
-					Raw:          []byte(resMatch),
+					Raw:          []byte(keyMatch),
 				}
 
 				if verify {
-					data := fmt.Sprintf("%s:%s", resEmail, resPword)
+					data := fmt.Sprintf("%s:%s", emailMatch, passMatch)
 					sEnc := b64.StdEncoding.EncodeToString([]byte(data))
-					req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://service.zipapi.us/zipcode/90210/?X-API-KEY=%s", resMatch), nil)
+					req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://service.zipapi.us/zipcode/90210/?X-API-KEY=%s", keyMatch), nil)
 					if err != nil {
 						continue
 					}
@@ -76,11 +75,6 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 						defer res.Body.Close()
 						if res.StatusCode >= 200 && res.StatusCode < 300 {
 							s1.Verified = true
-						} else {
-							// This function will check false positives for common test words, but also it will make sure the key appears 'random' enough to be a real key.
-							if detectors.IsKnownFalsePositive(resMatch, detectors.DefaultFalsePositives, true) {
-								continue
-							}
 						}
 					}
 				}
@@ -95,4 +89,8 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 
 func (s Scanner) Type() detectorspb.DetectorType {
 	return detectorspb.DetectorType_ZipAPI
+}
+
+func (s Scanner) Description() string {
+	return "ZipAPI is a service used to retrieve ZIP code information. ZipAPI keys can be used to access and retrieve this information from their API."
 }

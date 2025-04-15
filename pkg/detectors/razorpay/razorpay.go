@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"regexp"
+
+	regexp "github.com/wasilibs/go-re2"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
 )
 
-type Scanner struct{}
+type Scanner struct {
+	detectors.DefaultMultiPartCredentialProvider
+}
 
 // Ensure the Scanner satisfies the interface at compile time.
 var _ detectors.Detector = (*Scanner)(nil)
@@ -21,14 +24,14 @@ var _ detectors.Detector = (*Scanner)(nil)
 var (
 	client = common.SaneHttpClient()
 
-	keyPat    = regexp.MustCompile(`(?i)\brzp_live_\w{10,20}\b`)
-	secretPat = regexp.MustCompile(detectors.PrefixRegex([]string{"razor|secret|rzp|key"}) + `([A-Za-z0-9]{20,50})`)
+	keyPat    = regexp.MustCompile(`(?i)\brzp_live_[A-Za-z0-9]{14}\b`)
+	secretPat = regexp.MustCompile(`\b[A-Za-z0-9]{24}\b`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"rzp_"}
+	return []string{"rzp_live_"}
 }
 
 // FromData will find and optionally verify RazorPay secrets in a given set of bytes.
@@ -38,20 +41,19 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 	keyMatches := keyPat.FindAllString(dataStr, -1)
 
 	for _, key := range keyMatches {
+		secMatches := secretPat.FindAllString(dataStr, -1)
 
-		if verify {
-			secMatches := secretPat.FindAllString(dataStr, -1)
+		for _, secret := range secMatches {
 
-			for _, secret := range secMatches {
+			s1 := detectors.Result{
+				DetectorType: detectorspb.DetectorType_RazorPay,
+				Raw:          []byte(key),
+				RawV2:        []byte(key + secret),
+				Redacted:     key,
+			}
 
-				s1 := detectors.Result{
-					DetectorType: detectorspb.DetectorType_RazorPay,
-					Raw:          []byte(key),
-					RawV2:        []byte(key + secret),
-					Redacted:     key,
-				}
-
-				req, err := http.NewRequest("GET", "https://api.razorpay.com/v1/items?count=1", nil)
+			if verify {
+				req, err := http.NewRequestWithContext(ctx, "GET", "https://api.razorpay.com/v1/items?count=1", nil)
 				if err != nil {
 					continue
 				}
@@ -66,27 +68,23 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 					if res.StatusCode >= 200 && res.StatusCode < 300 {
 						if json.Valid(bodyBytes) {
 							s1.Verified = true
-						} else {
-							s1.Verified = false
-						}
-					} else {
-						// This function will check false positives for common test words, but also it will make sure the key appears 'random' enough to be a real key.
-						if detectors.IsKnownFalsePositive(key, detectors.DefaultFalsePositives, true) {
-							continue
 						}
 					}
 				}
-
-				results = append(results, s1)
 			}
+
+			results = append(results, s1)
 		}
 
 	}
 
-	results = detectors.CleanResults(results)
-	return
+	return results, nil
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
 	return detectorspb.DetectorType_RazorPay
+}
+
+func (s Scanner) Description() string {
+	return "RazorPay is a payment gateway service that allows businesses to accept, process, and disburse payments. RazorPay keys can be used to access and manage payment transactions."
 }
