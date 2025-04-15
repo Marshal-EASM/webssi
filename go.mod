@@ -1,8 +1,6 @@
 module github.com/trufflesecurity/trufflehog/v3
 
-go 1.23.1
-
-toolchain go1.24.2
+go 1.24.2
 
 replace github.com/jpillora/overseer => github.com/trufflesecurity/overseer v1.2.8
 
@@ -111,6 +109,7 @@ require (
 	golang.org/x/text v0.23.0
 	golang.org/x/time v0.10.0
 	google.golang.org/api v0.224.0
+	google.golang.org/appengine v1.6.8
 	google.golang.org/protobuf v1.36.5
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/yaml.v2 v2.4.0
@@ -214,6 +213,7 @@ require (
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/go-github/v66 v66.0.0 // indirect

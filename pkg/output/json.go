@@ -23,7 +23,9 @@ func (p *JSONPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) 
 		}
 		return ""
 	}(r.VerificationError())
-
+	if r.DetectorName == "" {
+		r.DetectorName = r.DetectorType.String()
+	}
 	v := &struct {
 		// SourceMetadata contains source-specific contextual information.
 		SourceMetadata *source_metadatapb.MetaData

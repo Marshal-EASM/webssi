@@ -29,10 +29,13 @@ var (
 type PlainPrinter struct{ mu sync.Mutex }
 
 func (p *PlainPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) error {
+	if r.Result.DetectorName == "" {
+		r.Result.DetectorName = r.DetectorType.String()
+	}
 	out := outputFormat{
 		DetectorType:        r.Result.DetectorType.String(),
 		DecoderType:         r.DecoderType.String(),
-		DetectorName: r.Result.DetectorName,
+		DetectorName:        r.Result.DetectorName,
 		Verified:            r.Result.Verified,
 		VerificationError:   r.Result.VerificationError(),
 		MetaData:            r.SourceMetadata,
