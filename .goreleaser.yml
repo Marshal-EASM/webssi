@@ -9,21 +9,21 @@ builds:
     - linux
     goarch:
     - amd64
-    - arm64
+    # - arm64
     hooks:
       post:
         - upx -q "{{ .Path }}"
-  - id: trufflehog
-    binary: trufflehog
-    ldflags:
-      - -X 'github.com/trufflesecurity/trufflehog/v3/pkg/version.BuildVersion={{ .Version }}'
-    env: [CGO_ENABLED=0]
-    goos:
-    - darwin
-    - windows
-    goarch:
-    - amd64
-    - arm64
+  # - id: trufflehog
+  #   binary: trufflehog
+  #   ldflags:
+  #     - -X 'github.com/trufflesecurity/trufflehog/v3/pkg/version.BuildVersion={{ .Version }}'
+  #   env: [CGO_ENABLED=0]
+  #   goos:
+  #   - darwin
+  #   - windows
+  #   goarch:
+  #   - amd64
+  #   - arm64
 dockers:
   - image_templates: ["trufflesecurity/{{ .ProjectName }}:{{ .Version }}-amd64"]
     dockerfile: Dockerfile.goreleaser

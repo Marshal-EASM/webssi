@@ -62,4 +62,4 @@ release-protos-image:
 	-t ${PROTOS_IMAGE} -f hack/Dockerfile.protos .
 
 test-release:
-	goreleaser release --clean --skip-publish --snapshot
+	goreleaser release --clean --skip sign,docker,homebrew,publish --snapshot
