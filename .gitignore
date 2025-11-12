@@ -10,3 +10,4 @@ tmp/go-test.json
 .captain/detectors/quarantines.yaml
 .captain/detectors/flakes.yaml
 .vscode
+temp/

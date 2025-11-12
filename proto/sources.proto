@@ -54,6 +54,7 @@ enum SourceType {
   SOURCE_TYPE_GITHUB_REALTIME = 39;
   SOURCE_TYPE_STDIN = 40;
   SOURCE_TYPE_SLACK_CONTINUOUS = 41;
+  SOURCE_TYPE_URL = 42;
 }
 
 message LocalSource {
@@ -184,6 +185,10 @@ message Filesystem {
   string include_paths_file = 3; // path to file containing newline separated list of paths
   string exclude_paths_file = 4; // path to file containing newline separated list of paths
   bool skip_binaries = 5; // allows skipping binary files from the scan
+}
+
+message URLConfig {
+  string filename = 1; // path to file containing list of URLs to scan
 }
 
 message GCS {

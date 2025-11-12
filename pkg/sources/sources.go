@@ -471,6 +471,11 @@ type ElasticsearchConfig struct {
 	BestEffortScan bool
 }
 
+type URLConfig struct {
+	Filename    string
+	Concurrency int
+}
+
 type StdinConfig struct{}
 
 // Progress is used to update job completion progress across sources.

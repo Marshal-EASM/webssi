@@ -53,6 +53,7 @@ var (
 	profile             = cli.Flag("profile", "Enables profiling and sets a pprof and fgprof server on :18066.").Bool()
 	localDev            = cli.Flag("local-dev", "Hidden feature to disable overseer for local dev.").Hidden().Bool()
 	jsonOut             = cli.Flag("json", "Output in JSON format.").Short('j').Bool()
+	outputFile          = cli.Flag("output-file", "Write output to a file.").Short('o').String()
 	jsonLegacy          = cli.Flag("json-legacy", "Use the pre-v3.0 JSON format. Only works with git, gitlab, and github sources.").Bool()
 	gitHubActionsFormat = cli.Flag("github-actions", "Output in GitHub Actions format.").Bool()
 	concurrency         = cli.Flag("concurrency", "Number of concurrent workers.").Default(strconv.Itoa(runtime.NumCPU())).Int()
@@ -151,6 +152,9 @@ var (
 	gitlabAuthInUrl        = gitlabScan.Flag("auth-in-url", "Embed authentication credentials in repository URLs instead of using secure HTTP headers").Bool()
 	gitlabClonePath        = gitlabScan.Flag("clone-path", "Custom path where the repository should be cloned (default: temp dir)").String()
 	gitlabNoCleanup        = gitlabScan.Flag("no-cleanup", "Do not delete cloned repositories after scanning (can only be used with --clone-path).").Bool()
+
+	urlScan = cli.Command("url", "Find credentials in a url file.")
+	urlPath = urlScan.Arg("url-path", "Path to file containing list of URLs to scan.").Required().String()
 
 	filesystemScan  = cli.Command("filesystem", "Find credentials in a filesystem.")
 	filesystemPaths = filesystemScan.Arg("path", "Path to file or directory to scan.").Strings()
@@ -502,7 +506,20 @@ func run(state overseer.State) {
 	case *jsonLegacy:
 		printer = new(output.LegacyJSONPrinter)
 	case *jsonOut:
-		printer = new(output.JSONPrinter)
+		if *outputFile != "" {
+			file, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				logFatal(err, "failed to create output file")
+			}
+			defer func() {
+				if err := file.Close(); err != nil {
+					logger.Error(err, "failed to close output file")
+				}
+			}()
+			printer = &output.JSONPrinter{Output: file}
+		} else {
+			printer = &output.JSONPrinter{}
+		}
 	case *gitHubActionsFormat:
 		printer = new(output.GitHubActionsPrinter)
 	default:
@@ -857,6 +874,17 @@ func runSingleScan(ctx context.Context, cmd string, cfg engine.Config) (metrics,
 		} else {
 			refs = []sources.JobProgressRef{ref}
 		}
+	case urlScan.FullCommand():
+		cfg := sources.URLConfig{
+			Filename:    *urlPath,
+			Concurrency: *concurrency,
+		}
+		if ref, err := eng.ScanURL(ctx, cfg); err != nil {
+			return scanMetrics, fmt.Errorf("failed to scan url file: %v", err)
+		} else {
+			refs = []sources.JobProgressRef{ref}
+		}
+
 	case filesystemScan.FullCommand():
 		if len(*filesystemDirectories) > 0 {
 			ctx.Logger().Info("--directory flag is deprecated, please pass directories as arguments")

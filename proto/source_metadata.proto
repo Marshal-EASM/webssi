@@ -93,6 +93,11 @@ message Filesystem {
   int64 line = 4;
 }
 
+message URL {
+  string link = 1;
+  int64 line = 2;
+}
+
 message Git {
   string commit = 1;
   string file = 2;
@@ -422,5 +427,6 @@ message MetaData {
     Sentry sentry = 33;
     Stdin stdin = 34;
     SlackContinuous slackContinuous = 35;
+    URL url = 36;
   }
 }

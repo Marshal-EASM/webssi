@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
@@ -14,7 +15,10 @@ import (
 )
 
 // JSONPrinter is a printer that prints results in JSON format.
-type JSONPrinter struct{ mu sync.Mutex }
+type JSONPrinter struct {
+	mu     sync.Mutex
+	Output *os.File
+}
 
 func (p *JSONPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) error {
 	verificationErr := func(err error) string {
@@ -79,6 +83,9 @@ func (p *JSONPrinter) Print(_ context.Context, r *detectors.ResultWithMetadata) 
 
 	p.mu.Lock()
 	fmt.Println(string(out))
+	if p.Output != nil {
+		p.Output.Write(append(out, '\n'))
+	}
 	p.mu.Unlock()
 	return nil
 }
