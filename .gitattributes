@@ -2,3 +2,5 @@
 *.md text eol=lf
 # 排除整个 detectors 目录下的所有测试文件（含子目录）
 pkg/detectors/** secret=false
+pkg/detectors/stripepaymentintent/stripepaymentintent_test.go secret=false
+pkg/detectors/rootly/rootly_test.go secret=false
