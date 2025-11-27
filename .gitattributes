@@ -1,2 +1,5 @@
 *.go text eol=lf
 *.md text eol=lf
+
+# 跳过 secret scanning 的文件或目录（例如测试数据、mocks）
+*.test.go secret=false
