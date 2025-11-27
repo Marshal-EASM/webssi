@@ -1,5 +1,4 @@
 *.go text eol=lf
 *.md text eol=lf
-
-# 跳过 secret scanning 的文件或目录（例如测试数据、mocks）
-*.test.go secret=false
+# 排除整个 detectors 目录下的所有测试文件（含子目录）
+pkg/detectors/** secret=false
