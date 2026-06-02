@@ -1,6 +1,8 @@
 package urlscanner
 
 import (
+	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -9,7 +11,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
@@ -19,7 +20,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 )
 
-const SourceType = sourcespb.SourceType_SOURCE_TYPE_URL
+const SourceType = sourcespb.SourceType_SOURCE_TYPE_STDIN
 
 type Source struct {
 	name        string
@@ -28,6 +29,7 @@ type Source struct {
 	sourceId    sources.SourceID
 	jobId       sources.JobID
 	verify      bool
+	skipTLS     bool
 	log         logr.Logger
 	sources.Progress
 	sources.CommonSourceUnitUnmarshaller
@@ -50,8 +52,8 @@ func (s *Source) JobID() sources.JobID {
 }
 
 func (s *Source) Init(aCtx context.Context, name string, jobId sources.JobID, sourceId sources.SourceID, verify bool, connection *anypb.Any, concurrency int) error {
-	var conn sourcespb.URLConfig
-	if err := anypb.UnmarshalTo(connection, &conn, proto.UnmarshalOptions{}); err != nil {
+	var conn sources.URLConfig
+	if err := json.Unmarshal(connection.GetValue(), &conn); err != nil {
 		return errors.WrapPrefix(err, "error unmarshalling connection", 0)
 	}
 	s.name = name
@@ -59,7 +61,8 @@ func (s *Source) Init(aCtx context.Context, name string, jobId sources.JobID, so
 	s.jobId = jobId
 	s.sourceId = sourceId
 	s.verify = verify
-	s.filename = conn.GetFilename()
+	s.filename = conn.Filename
+	s.skipTLS = conn.InsecureSkipVerifyTLS
 	s.log = aCtx.Logger()
 	return nil
 }
@@ -87,18 +90,12 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ .
 			defer stdin.Close()
 
 			chunkSkel := &sources.Chunk{
-				SourceType: s.Type(),
-				SourceName: s.name,
-				SourceID:   s.SourceID(),
-				JobID:      s.JobID(),
-				SourceMetadata: &source_metadatapb.MetaData{
-					Data: &source_metadatapb.MetaData_Url{
-						Url: &source_metadatapb.URL{
-							Link: target,
-						},
-					},
-				},
-				Verify: s.verify,
+				SourceType:     s.Type(),
+				SourceName:     s.name,
+				SourceID:       s.SourceID(),
+				JobID:          s.JobID(),
+				SourceMetadata: &source_metadatapb.MetaData{},
+				SourceVerify:   s.verify,
 			}
 			ctx.Logger().Info("scanning url for secrets", "url", target)
 			return handlers.HandleFile(ctx, stdin, chunkSkel, sources.ChanReporter{Ch: chunksChan})
@@ -135,6 +132,11 @@ func (s *Source) FetchURL(ctx context.Context, target string) (*os.File, error) 
 	}
 
 	client := &http.Client{}
+	if s.skipTLS {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // User-controlled URL source option.
+		}
+	}
 	response, err := client.Do(resp)
 	if err != nil {
 		return nil, errors.WrapPrefix(err, "error performing HTTP request", 0)

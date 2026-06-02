@@ -30,7 +30,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/engine"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/engine/defaults"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
@@ -40,7 +40,7 @@ import (
 // ScanResult represents a single secret finding.
 type ScanResult struct {
 	// DetectorType is the type of detector that found this secret.
-	DetectorType detectorspb.DetectorType
+	DetectorType detector_typepb.DetectorType
 	// DetectorName is the human-readable name of the detector.
 	DetectorName string
 	// Description is a description of what was detected.
@@ -93,6 +93,7 @@ type Scanner struct {
 	excludeDetectors string
 	filterEntropy    float64
 	filterUnverified bool
+	skipTLSVerify    bool
 }
 
 // Option is a function that configures a Scanner.
@@ -140,12 +141,20 @@ func WithFilterUnverified(filter bool) Option {
 	}
 }
 
+// WithSkipTLSVerify controls TLS certificate verification for URL scans.
+func WithSkipTLSVerify(skip bool) Option {
+	return func(s *Scanner) {
+		s.skipTLSVerify = skip
+	}
+}
+
 // NewScanner creates a new Scanner with the given options.
 func NewScanner(opts ...Option) (*Scanner, error) {
 	s := &Scanner{
 		concurrency:      runtime.NumCPU(),
 		verify:           true,
 		includeDetectors: "all",
+		skipTLSVerify:    true,
 	}
 
 	for _, opt := range opts {
@@ -297,8 +306,9 @@ func (s *Scanner) ScanURLFile(ctx context.Context, urlFilePath string) (*ScanOut
 	eng.Start(ctx)
 
 	cfg := sources.URLConfig{
-		Filename:    urlFilePath,
-		Concurrency: s.concurrency,
+		Filename:              urlFilePath,
+		Concurrency:           s.concurrency,
+		InsecureSkipVerifyTLS: s.skipTLSVerify,
 	}
 
 	if _, err := eng.ScanURL(ctx, cfg); err != nil {

@@ -1,7 +1,8 @@
 package engine
 
 import (
-	"google.golang.org/protobuf/proto"
+	"encoding/json"
+
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
@@ -12,18 +13,15 @@ import (
 
 // ScanFileSystem scans a given file system.
 func (e *Engine) ScanURL(ctx context.Context, c sources.URLConfig) (sources.JobProgressRef, error) {
-	connection := &sourcespb.URLConfig{
-		Filename: c.Filename,
-	}
-	var conn anypb.Any
-	err := anypb.MarshalFrom(&conn, connection, proto.MarshalOptions{})
+	connection, err := json.Marshal(c)
 	if err != nil {
-		ctx.Logger().Error(err, "failed to marshal url connection")
+		ctx.Logger().Error(err, "failed to marshal URL connection")
 		return sources.JobProgressRef{}, err
 	}
+	conn := anypb.Any{Value: connection}
 
 	sourceName := "trufflehog - urlscan"
-	sourceID, jobID, _ := e.sourceManager.GetIDs(ctx, sourceName, sourcespb.SourceType_SOURCE_TYPE_URL)
+	sourceID, jobID, _ := e.sourceManager.GetIDs(ctx, sourceName, sourcespb.SourceType_SOURCE_TYPE_STDIN)
 
 	urlSource := &urlscanner.Source{}
 	if err := urlSource.Init(ctx, sourceName, jobID, sourceID, true, &conn, c.Concurrency); err != nil {

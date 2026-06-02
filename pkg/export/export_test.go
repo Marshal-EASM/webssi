@@ -1,6 +1,9 @@
 package export
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
@@ -19,6 +22,9 @@ func TestNewScanner(t *testing.T) {
 	if !scanner.verify {
 		t.Error("expected verify to be true by default")
 	}
+	if !scanner.skipTLSVerify {
+		t.Error("expected skipTLSVerify to be true by default")
+	}
 }
 
 func TestNewScannerWithOptions(t *testing.T) {
@@ -29,6 +35,7 @@ func TestNewScannerWithOptions(t *testing.T) {
 		WithExcludeDetectors("slack"),
 		WithFilterEntropy(3.0),
 		WithFilterUnverified(true),
+		WithSkipTLSVerify(false),
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
@@ -52,6 +59,9 @@ func TestNewScannerWithOptions(t *testing.T) {
 	}
 	if !scanner.filterUnverified {
 		t.Error("expected filterUnverified to be true")
+	}
+	if scanner.skipTLSVerify {
+		t.Error("expected skipTLSVerify to be false")
 	}
 }
 
@@ -138,6 +148,14 @@ func TestScanString(t *testing.T) {
 }
 
 func TestScanURLs(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+`))
+	}))
+	defer server.Close()
+
 	scanner, err := NewScanner(WithVerify(false))
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
@@ -145,11 +163,42 @@ func TestScanURLs(t *testing.T) {
 	defer scanner.Close()
 
 	ctx := context.Background()
-	result, err := scanner.ScanURLs(ctx, []string{"http://localhost:50000/dev.yaml"})
-	if err == nil {
-		t.Error("expected error for empty URLs")
+	result, err := scanner.ScanURLs(ctx, []string{server.URL})
+	if err != nil {
+		t.Fatalf("failed to scan URLs: %v", err)
 	}
-	if result != nil {
-		t.Logf("received result: %+v", result)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestScanURLsWithMockHTTPServer(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`
+DATABASE_URL=postgres://user:password123@localhost:5432/mydb
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+`))
+	}))
+	defer server.Close()
+
+	scanner, err := NewScanner(WithVerify(false))
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+	defer scanner.Close()
+
+	ctx := context.Background()
+	result, err := scanner.ScanURLs(ctx, []string{server.URL})
+	if err != nil {
+		t.Fatalf("failed to scan mock HTTP server: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if requests.Load() == 0 {
+		t.Fatal("expected mock HTTP server to be requested")
 	}
 }

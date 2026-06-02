@@ -392,6 +392,16 @@ type FilesystemConfig struct {
 	MaxSymlinkDepth int32
 }
 
+// URLConfig defines the optional configuration for a URL source.
+type URLConfig struct {
+	// Filename is the path to a file containing URLs to scan.
+	Filename string
+	// InsecureSkipVerifyTLS skips TLS certificate verification when fetching URLs.
+	InsecureSkipVerifyTLS bool
+	// Concurrency is the number of concurrent URL fetches.
+	Concurrency int
+}
+
 // S3Config defines the optional configuration for an S3 source.
 type S3Config struct {
 	// CloudCred determines whether to use cloud credentials.

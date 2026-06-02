@@ -1806,6 +1806,8 @@ func (m *URLConfig) validate(all bool) error {
 
 	// no validation rules for Filename
 
+	// no validation rules for InsecureSkipVerifyTls
+
 	if len(errors) > 0 {
 		return URLConfigMultiError(errors)
 	}
