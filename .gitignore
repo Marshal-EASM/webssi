@@ -11,3 +11,7 @@ tmp/go-test.json
 .captain/detectors/flakes.yaml
 .vscode
 temp/
+
+# Python
+__pycache__/
+*.pyc

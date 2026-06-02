@@ -15,7 +15,7 @@ import (
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 )
 
 const (
@@ -55,6 +55,33 @@ var (
 type Scanner struct {
 	detectors.DefaultMultiPartCredentialProvider
 	detectLoopback bool // Automated tests run against localhost, but we want to ignore those results in the wild
+	ignorePatterns []*regexp.Regexp
+}
+
+func New(opts ...func(*Scanner)) *Scanner {
+	scanner := &Scanner{
+		ignorePatterns: []*regexp.Regexp{},
+	}
+	for _, opt := range opts {
+		opt(scanner)
+	}
+
+	return scanner
+}
+
+func WithIgnorePattern(ignoreStrings []string) func(*Scanner) {
+	return func(s *Scanner) {
+		var ignorePatterns []*regexp.Regexp
+		for _, ignoreString := range ignoreStrings {
+			ignorePattern, err := regexp.Compile(ignoreString)
+			if err != nil {
+				panic(fmt.Sprintf("%s is not a valid regex, error received: %v", ignoreString, err))
+			}
+			ignorePatterns = append(ignorePatterns, ignorePattern)
+		}
+
+		s.ignorePatterns = ignorePatterns
+	}
 }
 
 var _ detectors.Detector = (*Scanner)(nil)
@@ -66,7 +93,7 @@ func (s Scanner) Keywords() []string {
 
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) ([]detectors.Result, error) {
 	var results []detectors.Result
-	candidateParamSets := findUriMatches(data)
+	candidateParamSets := findUriMatches(data, s.ignorePatterns)
 
 	for _, params := range candidateParamSets {
 		if common.IsDone(ctx) {
@@ -109,9 +136,10 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) ([]dete
 		raw := []byte(fmt.Sprintf("%s://%s:%s@%s:%s", dbType, user, password, host, port))
 
 		result := detectors.Result{
-			DetectorType: detectorspb.DetectorType_Postgres,
+			DetectorType: detector_typepb.DetectorType_Postgres,
 			Raw:          raw,
 			RawV2:        raw,
+			SecretParts:  map[string]string{"connection_string": string(raw)},
 		}
 
 		// We don't need to normalize the (deprecated) requiressl option into the (up-to-date) sslmode option - pq can
@@ -137,9 +165,6 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) ([]dete
 			isVerified, verificationErr := verifyPostgres(params)
 			result.Verified = isVerified
 			result.SetVerificationError(verificationErr, password)
-			result.AnalysisInfo = map[string]string{
-				"connection_string": string(raw),
-			}
 		}
 
 		// We gather SSL information into ExtraData in case it's useful for later reporting.
@@ -149,6 +174,19 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) ([]dete
 		}
 		result.ExtraData = map[string]string{
 			pgSslmode: sslmode,
+		}
+		if host != "" {
+			if port != "" {
+				result.ExtraData["host"] = host + ":" + port
+			} else {
+				result.ExtraData["host"] = host
+			}
+		}
+		if user != "" {
+			result.ExtraData["username"] = user
+		}
+		if dbname := params[pgDbname]; dbname != "" {
+			result.ExtraData["database"] = dbname
 		}
 
 		results = append(results, result)
@@ -161,9 +199,12 @@ func (s Scanner) IsFalsePositive(_ detectors.Result) (bool, string) {
 	return false, ""
 }
 
-func findUriMatches(data []byte) []map[string]string {
+func findUriMatches(data []byte, ignorePatterns []*regexp.Regexp) []map[string]string {
 	var matches []map[string]string
 	for _, uri := range uriPattern.FindAll(data, -1) {
+		if shouldIgnore(uri, ignorePatterns) {
+			continue
+		}
 		// Capture the database type (e.g., "postgres" or "postgresql")
 		dbTypeMatch := uriPattern.FindSubmatch(uri)
 		if len(dbTypeMatch) < 2 {
@@ -186,6 +227,15 @@ func findUriMatches(data []byte) []map[string]string {
 		matches = append(matches, params)
 	}
 	return matches
+}
+
+func shouldIgnore(uri []byte, ignorePatterns []*regexp.Regexp) bool {
+	for _, ignore := range ignorePatterns {
+		if ignore.Match(uri) {
+			return true
+		}
+	}
+	return false
 }
 
 // getDeadlineInSeconds gets the deadline from the context in seconds. If there
@@ -241,7 +291,7 @@ func verifyPostgres(params map[string]string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err = db.Ping()
 	switch {
@@ -263,8 +313,8 @@ func verifyPostgres(params map[string]string) (bool, error) {
 	}
 }
 
-func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_Postgres
+func (s Scanner) Type() detector_typepb.DetectorType {
+	return detector_typepb.DetectorType_Postgres
 }
 
 func (s Scanner) Description() string {

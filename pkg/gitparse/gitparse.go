@@ -22,13 +22,17 @@ import (
 
 const (
 	// defaultDateFormat is the standard date format for git.
-	defaultDateFormat = "Mon Jan 2 15:04:05 2006 -0700"
+	// Uses ISO 8601 format to avoid locale-dependent weekday/month names.
+	defaultDateFormat = time.RFC3339
 
 	// defaultMaxDiffSize is the maximum size for a diff. Larger diffs will be cut off.
 	defaultMaxDiffSize int64 = 2 * 1024 * 1024 * 1024 // 2GB
 
 	// defaultMaxCommitSize is the maximum size for a commit. Larger commits will be cut off.
 	defaultMaxCommitSize int64 = 2 * 1024 * 1024 * 1024 // 2GB
+
+	// defaultWaitDelay is the default time to wait after context cancellation before forcefully killing git processes.
+	defaultWaitDelay = 5 * time.Second
 )
 
 // contentWriter defines a common interface for writing, reading, and managing diff content.
@@ -123,6 +127,7 @@ type Parser struct {
 	maxDiffSize   int64
 	maxCommitSize int64
 	dateFormat    string
+	waitDelay     time.Duration
 
 	useCustomContentWriter bool
 }
@@ -203,6 +208,14 @@ func WithMaxCommitSize(maxCommitSize int64) Option {
 	}
 }
 
+// WithWaitDelay sets the waitDelay option. This specifies how long to wait after
+// context cancellation before forcefully killing git processes.
+func WithWaitDelay(waitDelay time.Duration) Option {
+	return func(parser *Parser) {
+		parser.waitDelay = waitDelay
+	}
+}
+
 // Option is used for adding options to Config.
 type Option func(*Parser)
 
@@ -212,6 +225,7 @@ func NewParser(options ...Option) *Parser {
 		dateFormat:    defaultDateFormat,
 		maxDiffSize:   defaultMaxDiffSize,
 		maxCommitSize: defaultMaxCommitSize,
+		waitDelay:     defaultWaitDelay,
 	}
 	for _, option := range options {
 		option(parser)
@@ -235,7 +249,7 @@ func (c *Parser) RepoPath(
 		"log",
 		"--patch", // https://git-scm.com/docs/git-log#Documentation/git-log.txt---patch
 		"--full-history",
-		"--date=format:%a %b %d %H:%M:%S %Y %z",
+		"--date=iso-strict",
 		"--pretty=fuller", // https://git-scm.com/docs/git-log#_pretty_formats
 		"--notes",         // https://git-scm.com/docs/git-log#Documentation/git-log.txt---notesltrefgt
 	}
@@ -252,7 +266,7 @@ func (c *Parser) RepoPath(
 		args = append(args, "--", ".", ":(exclude)"+glob)
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	absPath, err := filepath.Abs(source)
 	if err == nil {
 		if !isBare {
@@ -272,26 +286,27 @@ func (c *Parser) RepoPath(
 		}
 	}
 
-	return c.executeCommand(ctx, cmd, false)
+	return c.executeCommand(ctx, cmd, false, c.waitDelay)
 }
 
 // Staged parses the output of the `git diff` command for the `source` path.
 func (c *Parser) Staged(ctx context.Context, source string) (chan *Diff, error) {
 	// Provide the --cached flag to diff to get the diff of the staged changes.
-	args := []string{"-C", source, "diff", "-p", "--cached", "--full-history", "--diff-filter=AM", "--date=format:%a %b %d %H:%M:%S %Y %z"}
+	args := []string{"-C", source, "diff", "-p", "--cached", "--full-history", "--diff-filter=AM", "--date=iso-strict"}
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 
 	absPath, err := filepath.Abs(source)
 	if err == nil {
 		cmd.Env = append(cmd.Env, "GIT_DIR="+filepath.Join(absPath, ".git"))
 	}
 
-	return c.executeCommand(ctx, cmd, true)
+	return c.executeCommand(ctx, cmd, true, c.waitDelay)
 }
 
 // executeCommand runs an exec.Cmd, reads stdout and stderr, and waits for the Cmd to complete.
-func (c *Parser) executeCommand(ctx context.Context, cmd *exec.Cmd, isStaged bool) (chan *Diff, error) {
+// waitDelay specifies how long to wait after context cancellation before forcefully killing the process.
+func (c *Parser) executeCommand(ctx context.Context, cmd *exec.Cmd, isStaged bool, waitDelay time.Duration) (chan *Diff, error) {
 	diffChan := make(chan *Diff, 64)
 
 	stdOut, err := cmd.StdoutPipe()
@@ -302,6 +317,9 @@ func (c *Parser) executeCommand(ctx context.Context, cmd *exec.Cmd, isStaged boo
 	if err != nil {
 		return diffChan, err
 	}
+
+	// Set WaitDelay to allow the command additional time to exit after context cancellation
+	cmd.WaitDelay = waitDelay
 
 	err = cmd.Start()
 	if err != nil {
@@ -353,10 +371,7 @@ func (c *Parser) FromReader(ctx context.Context, stdOut io.Reader, diffChan chan
 
 	defer common.RecoverWithExit(ctx)
 	defer close(diffChan)
-	for {
-		if common.IsDone(ctx) {
-			break
-		}
+	for !common.IsDone(ctx) {
 
 		line, err := outReader.ReadBytes([]byte("\n")[0])
 		if err != nil && len(line) == 0 {
@@ -598,15 +613,15 @@ func isMergeLine(isStaged bool, latestState ParseState, line []byte) bool {
 
 // commit 7a95bbf0199e280a0e42dbb1d1a3f56cdd0f6e05
 func isCommitLine(isStaged bool, latestState ParseState, line []byte) bool {
-	if isStaged || !(latestState == Initial ||
-		latestState == MessageStartLine ||
-		latestState == MessageEndLine ||
-		latestState == ModeLine ||
-		latestState == IndexLine ||
-		latestState == BinaryFileLine ||
-		latestState == ToFileLine ||
-		latestState == HunkContentLine ||
-		latestState == ParseFailure) {
+	if isStaged || (latestState != Initial &&
+		latestState != MessageStartLine &&
+		latestState != MessageEndLine &&
+		latestState != ModeLine &&
+		latestState != IndexLine &&
+		latestState != BinaryFileLine &&
+		latestState != ToFileLine &&
+		latestState != HunkContentLine &&
+		latestState != ParseFailure) {
 		return false
 	}
 
@@ -618,7 +633,7 @@ func isCommitLine(isStaged bool, latestState ParseState, line []byte) bool {
 
 // Author: Bill Rich <bill.rich@trufflesec.com>
 func isAuthorLine(isStaged bool, latestState ParseState, line []byte) bool {
-	if isStaged || !(latestState == CommitLine || latestState == MergeLine) {
+	if isStaged || (latestState != CommitLine && latestState != MergeLine) {
 		return false
 	}
 	if len(line) > 8 && bytes.Equal(line[:7], []byte("Author:")) {
@@ -627,7 +642,7 @@ func isAuthorLine(isStaged bool, latestState ParseState, line []byte) bool {
 	return false
 }
 
-// AuthorDate:   Tue Aug 10 15:20:40 2021 +0100
+// AuthorDate: 2021-08-10T15:20:40+01:00
 func isAuthorDateLine(isStaged bool, latestState ParseState, line []byte) bool {
 	if isStaged || latestState != AuthorLine {
 		return false
@@ -674,7 +689,7 @@ func isMessageStartLine(isStaged bool, latestState ParseState, line []byte) bool
 
 // Line that starts with 4 spaces
 func isMessageLine(isStaged bool, latestState ParseState, line []byte) bool {
-	if isStaged || !(latestState == MessageStartLine || latestState == MessageLine) {
+	if isStaged || (latestState != MessageStartLine && latestState != MessageLine) {
 		return false
 	}
 	if len(line) > 4 && bytes.Equal(line[:4], []byte("    ")) {
@@ -708,7 +723,7 @@ func isNotesStartLine(isStaged bool, latestState ParseState, line []byte) bool {
 
 // Line after NotesStartLine that starts with 4 spaces
 func isNotesLine(isStaged bool, latestState ParseState, line []byte) bool {
-	if isStaged || !(latestState == NotesStartLine || latestState == NotesLine) {
+	if isStaged || (latestState != NotesStartLine && latestState != NotesLine) {
 		return false
 	}
 	if len(line) > 4 && bytes.Equal(line[:4], []byte("    ")) {
@@ -730,15 +745,15 @@ func isNotesEndLine(isStaged bool, latestState ParseState, line []byte) bool {
 
 // diff --git a/internal/addrs/move_endpoint_module.go b/internal/addrs/move_endpoint_module.go
 func isDiffLine(isStaged bool, latestState ParseState, line []byte) bool {
-	if !(latestState == MessageStartLine || // Empty commit messages can go from MessageStart->Diff
-		latestState == MessageEndLine ||
-		latestState == NotesEndLine ||
-		latestState == BinaryFileLine ||
-		latestState == ModeLine ||
-		latestState == IndexLine ||
-		latestState == HunkContentLine ||
-		latestState == ParseFailure) {
-		if !(isStaged && latestState == Initial) {
+	if latestState != MessageStartLine &&
+		latestState != MessageEndLine &&
+		latestState != NotesEndLine &&
+		latestState != BinaryFileLine &&
+		latestState != ModeLine &&
+		latestState != IndexLine &&
+		latestState != HunkContentLine &&
+		latestState != ParseFailure {
+		if !isStaged || latestState != Initial {
 			return false
 		}
 	}
@@ -756,7 +771,7 @@ func isDiffLine(isStaged bool, latestState ParseState, line []byte) bool {
 // rename to new.txt
 // deleted file mode 100644
 func isModeLine(latestState ParseState, line []byte) bool {
-	if !(latestState == DiffLine || latestState == ModeLine) {
+	if latestState != DiffLine && latestState != ModeLine {
 		return false
 	}
 	// This could probably be better written.
@@ -775,7 +790,7 @@ func isModeLine(latestState ParseState, line []byte) bool {
 // index 1ed6fbee1..aea1e643a 100644
 // index 00000000..e69de29b
 func isIndexLine(latestState ParseState, line []byte) bool {
-	if !(latestState == DiffLine || latestState == ModeLine) {
+	if latestState != DiffLine && latestState != ModeLine {
 		return false
 	}
 	if len(line) > 6 && bytes.Equal(line[:6], []byte("index ")) {
@@ -830,7 +845,7 @@ func pathFromBinaryLine(line []byte) (string, bool) {
 // --- a/internal/addrs/move_endpoint_module.go
 // --- /dev/null
 func isFromFileLine(latestState ParseState, line []byte) bool {
-	if !(latestState == IndexLine || latestState == ModeLine) {
+	if latestState != IndexLine && latestState != ModeLine {
 		return false
 	}
 	if len(line) >= 6 && bytes.Equal(line[:4], []byte("--- ")) {
@@ -888,7 +903,7 @@ func pathFromToFileLine(line []byte) (string, bool) {
 
 // @@ -298 +298 @@ func maxRetryErrorHandler(resp *http.Response, err error, numTries int)
 func isHunkLineNumberLine(latestState ParseState, line []byte) bool {
-	if !(latestState == ToFileLine || latestState == HunkContentLine) {
+	if latestState != ToFileLine && latestState != HunkContentLine {
 		return false
 	}
 	if len(line) >= 8 && bytes.Equal(line[:2], []byte("@@")) {
@@ -900,7 +915,7 @@ func isHunkLineNumberLine(latestState ParseState, line []byte) bool {
 // fmt.Println("ok")
 // (There's a space before `fmt` that gets removed by the formatter.)
 func isHunkContextLine(latestState ParseState, line []byte) bool {
-	if !(latestState == HunkLineNumberLine || latestState == HunkContentLine) {
+	if latestState != HunkLineNumberLine && latestState != HunkContentLine {
 		return false
 	}
 	if len(line) >= 1 && bytes.Equal(line[:1], []byte(" ")) {
@@ -911,7 +926,7 @@ func isHunkContextLine(latestState ParseState, line []byte) bool {
 
 // +fmt.Println("ok")
 func isHunkPlusLine(latestState ParseState, line []byte) bool {
-	if !(latestState == HunkLineNumberLine || latestState == HunkContentLine) {
+	if latestState != HunkLineNumberLine && latestState != HunkContentLine {
 		return false
 	}
 	if len(line) >= 1 && bytes.Equal(line[:1], []byte("+")) {
@@ -922,7 +937,7 @@ func isHunkPlusLine(latestState ParseState, line []byte) bool {
 
 // -fmt.Println("ok")
 func isHunkMinusLine(latestState ParseState, line []byte) bool {
-	if !(latestState == HunkLineNumberLine || latestState == HunkContentLine) {
+	if latestState != HunkLineNumberLine && latestState != HunkContentLine {
 		return false
 	}
 	if len(line) >= 1 && bytes.Equal(line[:1], []byte("-")) {
@@ -947,7 +962,7 @@ func isHunkNewlineWarningLine(latestState ParseState, line []byte) bool {
 //
 // commit 00920984e3435057f09cee5468850f7546dfa637 (tag: v3.42.0)
 func isHunkEmptyLine(latestState ParseState, line []byte) bool {
-	if !(latestState == HunkLineNumberLine || latestState == HunkContentLine) {
+	if latestState != HunkLineNumberLine && latestState != HunkContentLine {
 		return false
 	}
 	// TODO: Can this also be `\n\r`?

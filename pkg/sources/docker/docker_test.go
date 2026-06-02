@@ -71,7 +71,7 @@ func TestQuayRegistry(t *testing.T) {
 		Credential: &sourcespb.Docker_Unauthenticated{
 			Unauthenticated: &credentialspb.Unauthenticated{},
 		},
-		Images: []string{"quay.io/prometheus/busybox"}, // https://quay.io/repository/prometheus/busybox
+		Images: []string{"quay.io/prometheus/node-exporter@sha256:337ff1d356b68d39cef853e8c6345de11ce7556bb34cda8bd205bcf2ed30b565"},
 	}
 
 	conn := &anypb.Any{}
@@ -109,9 +109,9 @@ func TestQuayRegistry(t *testing.T) {
 	close(chunksChan)
 	wg.Wait()
 
-	assert.Equal(t, 945, chunkCounter)
-	assert.Equal(t, 941, layerCounter)
-	assert.Equal(t, 4, historyCounter)
+	assert.Equal(t, 1302, chunkCounter)
+	assert.Equal(t, 1291, layerCounter)
+	assert.Equal(t, 11, historyCounter)
 }
 
 func TestGHCRRegistry(t *testing.T) {
@@ -267,7 +267,7 @@ func TestDockerImageScanFromLocalDaemon(t *testing.T) {
 		return
 	}
 
-	defer resp.Close()
+	defer func() { _ = resp.Close() }()
 
 	// if we don't read the response, the image will not be available in the local Docker daemon
 	_, err = io.ReadAll(resp)

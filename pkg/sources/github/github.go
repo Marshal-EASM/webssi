@@ -254,7 +254,7 @@ func (s *Source) Init(aCtx context.Context, name string, jobID sources.JobID, so
 
 	s.filteredRepoCache = s.newFilteredRepoCache(aCtx,
 		simple.NewCache[string](),
-		s.conn.GetRepositories(),
+		append(s.conn.GetRepositories(), s.conn.GetIncludeRepos()...),
 		s.conn.GetIgnoreRepos(),
 	)
 	s.repos = s.conn.Repositories
@@ -288,19 +288,19 @@ func (s *Source) Init(aCtx context.Context, name string, jobID sources.JobID, so
 		SkipBinaries: conn.GetSkipBinaries(),
 		SkipArchives: conn.GetSkipArchives(),
 		Concurrency:  concurrency,
-		SourceMetadataFunc: func(file, email, commit, timestamp, repository, repositoryLocalPath string, line int64) *source_metadatapb.MetaData {
+		SourceMetadataFunc: func(info git.SourceMetadataInfo) *source_metadatapb.MetaData {
 			return &source_metadatapb.MetaData{
 				Data: &source_metadatapb.MetaData_Github{
 					Github: &source_metadatapb.Github{
-						Commit:              sanitizer.UTF8(commit),
-						File:                sanitizer.UTF8(file),
-						Email:               sanitizer.UTF8(email),
-						Repository:          sanitizer.UTF8(repository),
-						Link:                giturl.GenerateLink(repository, commit, file, line),
-						Timestamp:           sanitizer.UTF8(timestamp),
-						Line:                line,
-						Visibility:          s.visibilityOf(aCtx, repository),
-						RepositoryLocalPath: sanitizer.UTF8(repositoryLocalPath),
+						Commit:              sanitizer.UTF8(info.Commit),
+						File:                sanitizer.UTF8(info.File),
+						Email:               sanitizer.UTF8(info.Email),
+						Repository:          sanitizer.UTF8(info.Repository),
+						Link:                giturl.GenerateLink(info.Repository, info.Commit, info.File, info.Line),
+						Timestamp:           sanitizer.UTF8(info.Timestamp),
+						Line:                info.Line,
+						Visibility:          s.visibilityOf(aCtx, info.Repository),
+						RepositoryLocalPath: sanitizer.UTF8(info.RepositoryLocalPath),
 					},
 				},
 			}
@@ -410,6 +410,7 @@ func (s *Source) Enumerate(ctx context.Context, reporter sources.UnitReporter) e
 			if err := dedupeReporter.UnitErr(ctx, err); err != nil {
 				return err
 			}
+			continue
 		}
 		if err := dedupeReporter.UnitOk(ctx, RepoUnit{Name: name, URL: url}); err != nil {
 			return err
@@ -448,20 +449,11 @@ func (s *Source) Enumerate(ctx context.Context, reporter sources.UnitReporter) e
 		// filteredRepoCache have an entry in the repoInfoCache.
 		for _, repo := range s.filteredRepoCache.Values() {
 			// Extract the repository name from the URL for filtering
-			repoName := repo
-			if strings.Contains(repo, "/") {
-				// Try to extract org/repo name from URL
-				if strings.Contains(repo, "github.com") {
-					parts := strings.Split(repo, "/")
-					if len(parts) >= 2 {
-						repoName = parts[len(parts)-2] + "/" + strings.TrimSuffix(parts[len(parts)-1], ".git")
-					}
-				}
-			}
+			repoName := extractRepoNameFromUrl(repo)
 
 			// Final filter check - only include repositories that pass the filter
 			if s.filteredRepoCache.wantRepo(repoName) {
-				ctx = context.WithValue(ctx, "repo", repo)
+				ctx := context.WithValue(ctx, "repo", repo)
 
 				repo, err := s.ensureRepoInfoCache(ctx, repo, &unitErrorReporter{reporter})
 				if err != nil {
@@ -525,6 +517,14 @@ func (s *Source) ensureRepoInfoCache(ctx context.Context, repo string, reporter 
 				return repo, fmt.Errorf("failed to fetch repository: %w", err)
 			}
 			s.cacheRepoInfo(ghRepo)
+			// Handle repository redirects: the API returns the canonical CloneURL
+			// which may differ from the original URL (e.g. org rename). Cache info
+			// under the original URL too so scanRepo can look it up.
+			if cloneURL := ghRepo.GetCloneURL(); cloneURL != repo {
+				if info, ok := s.repoInfoCache.get(cloneURL); ok {
+					s.repoInfoCache.put(repo, info)
+				}
+			}
 			break
 		}
 	}
@@ -769,7 +769,7 @@ func (s *Source) cloneAndScanRepo(ctx context.Context, repoURL string, repoInfo 
 	// if legacy JSON is enabled, don't remove the directory because we need it for outputting legacy JSON.
 	if !s.conn.GetPrintLegacyJson() {
 		if strings.HasPrefix(path, filepath.Join(os.TempDir(), "trufflehog")) || (!s.conn.NoCleanup && s.conn.GetClonePath() != "") {
-			defer os.RemoveAll(path)
+			defer func() { _ = os.RemoveAll(path) }()
 		}
 	}
 
@@ -1138,10 +1138,16 @@ func getRepoURLParts(repoURLString string) (string, []string, error) {
 		repoURL.User = nil
 	}
 
+	// Use Host and Path directly instead of reconstructing via String().
+	// This preserves special characters like trailing hyphens in repo names
+	// that might be lost during URL reconstruction.
+	// See: https://github.com/trufflesecurity/trufflehog/issues/4679
+	host := repoURL.Host
+	path := strings.TrimPrefix(repoURL.Path, "/")
+	path = strings.TrimSuffix(path, ".git")
+
 	urlString := repoURL.String()
-	trimmedURL := strings.TrimPrefix(urlString, repoURL.Scheme+"://")
-	trimmedURL = strings.TrimSuffix(trimmedURL, ".git")
-	urlParts := strings.Split(trimmedURL, "/")
+	urlParts := append([]string{host}, strings.Split(path, "/")...)
 
 	// Validate
 	switch len(urlParts) {
@@ -1254,8 +1260,8 @@ func (s *Source) chunkGistComments(ctx context.Context, gistURL string, gistInfo
 					},
 				},
 			},
-			Data:   []byte(sanitizer.UTF8(comment.GetBody())),
-			Verify: s.verify,
+			Data:         []byte(sanitizer.UTF8(comment.GetBody())),
+			SourceVerify: s.verify,
 		}
 
 		if err := reporter.ChunkOk(ctx, chunk); err != nil {
@@ -1357,7 +1363,7 @@ func (s *Source) processIssues(ctx context.Context, repoInfo repoInfo, reporter 
 			return err
 		}
 
-		bodyTextsOpts.ListOptions.Page++
+		bodyTextsOpts.Page++
 
 		if len(issues) < defaultPagination {
 			break
@@ -1391,8 +1397,8 @@ func (s *Source) chunkIssues(ctx context.Context, repoInfo repoInfo, issues []*g
 					},
 				},
 			},
-			Data:   []byte(sanitizer.UTF8(issue.GetTitle() + "\n" + issue.GetBody())),
-			Verify: s.verify,
+			Data:         []byte(sanitizer.UTF8(issue.GetTitle() + "\n" + issue.GetBody())),
+			SourceVerify: s.verify,
 		}
 
 		if err := reporter.ChunkOk(ctx, chunk); err != nil {
@@ -1425,7 +1431,7 @@ func (s *Source) processIssueComments(ctx context.Context, repoInfo repoInfo, re
 			return err
 		}
 
-		issueOpts.ListOptions.Page++
+		issueOpts.Page++
 		if len(issueComments) < defaultPagination {
 			break
 		}
@@ -1458,8 +1464,8 @@ func (s *Source) chunkIssueComments(ctx context.Context, repoInfo repoInfo, comm
 					},
 				},
 			},
-			Data:   []byte(sanitizer.UTF8(comment.GetBody())),
-			Verify: s.verify,
+			Data:         []byte(sanitizer.UTF8(comment.GetBody())),
+			SourceVerify: s.verify,
 		}
 
 		if err := reporter.ChunkOk(ctx, chunk); err != nil {
@@ -1493,7 +1499,7 @@ func (s *Source) processPRs(ctx context.Context, repoInfo repoInfo, reporter sou
 			return err
 		}
 
-		prOpts.ListOptions.Page++
+		prOpts.Page++
 
 		if len(prs) < defaultPagination {
 			break
@@ -1525,7 +1531,7 @@ func (s *Source) processPRComments(ctx context.Context, repoInfo repoInfo, repor
 			return err
 		}
 
-		prOpts.ListOptions.Page++
+		prOpts.Page++
 
 		if len(prComments) < defaultPagination {
 			break
@@ -1554,8 +1560,8 @@ func (s *Source) chunkPullRequests(ctx context.Context, repoInfo repoInfo, prs [
 					},
 				},
 			},
-			Data:   []byte(sanitizer.UTF8(pr.GetTitle() + "\n" + pr.GetBody())),
-			Verify: s.verify,
+			Data:         []byte(sanitizer.UTF8(pr.GetTitle() + "\n" + pr.GetBody())),
+			SourceVerify: s.verify,
 		}
 
 		if err := reporter.ChunkOk(ctx, chunk); err != nil {
@@ -1590,8 +1596,8 @@ func (s *Source) chunkPullRequestComments(ctx context.Context, repoInfo repoInfo
 					},
 				},
 			},
-			Data:   []byte(sanitizer.UTF8(comment.GetBody())),
-			Verify: s.verify,
+			Data:         []byte(sanitizer.UTF8(comment.GetBody())),
+			SourceVerify: s.verify,
 		}
 
 		if err := reporter.ChunkOk(ctx, chunk); err != nil {
@@ -1629,7 +1635,7 @@ func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, 
 		SourceMetadata: &source_metadatapb.MetaData{
 			Data: &source_metadatapb.MetaData_Github{Github: meta},
 		},
-		Verify: s.verify,
+		SourceVerify: s.verify,
 	}
 
 	u, err := url.Parse(meta.GetLink())
@@ -1661,7 +1667,7 @@ func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, 
 	// As of this writing, if the returned readCloser is not nil, it's just the Body of the returned github.Response, so
 	// there's no need to independently close it.
 	if resp != nil && resp.Body != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 	if err != nil {
 		return fmt.Errorf("could not download file for scan: %w", err)
@@ -1678,7 +1684,7 @@ func (s *Source) scanCommitMetadata(ctx context.Context, owner, repo string, met
 	// fetch the commit
 	commit, resp, err := s.connector.APIClient().Repositories.GetCommit(ctx, owner, repo, meta.GetCommit(), nil)
 	if resp != nil && resp.Body != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 	if err != nil {
 		return fmt.Errorf("could not fetch commit for metadata scan: %w", err)

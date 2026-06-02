@@ -32,6 +32,26 @@ func ValidateRegex(regex map[string]string) error {
 	return nil
 }
 
+func ValidateRegexSlice(regex []string) error {
+	for i, reg := range regex {
+		if _, err := regexp.Compile(reg); err != nil {
+			return fmt.Errorf("regex '%d': %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+// validates if a provided non-empty primary regex name exists in the map of regexes
+func ValidatePrimaryRegexName(primaryRegexName string, regexes map[string]string) error {
+	if primaryRegexName == "" {
+		return nil
+	}
+	if _, ok := regexes[primaryRegexName]; !ok {
+		return fmt.Errorf("unknown primary regex name: %q", primaryRegexName)
+	}
+	return nil
+}
+
 func ValidateVerifyEndpoint(endpoint string, unsafe bool) error {
 	if len(endpoint) == 0 {
 		return fmt.Errorf("no endpoint")
@@ -50,6 +70,28 @@ func ValidateVerifyHeaders(headers []string) error {
 		}
 	}
 	return nil
+}
+
+// StatusCodeMatchesRanges reports whether code falls within any of the given
+// ranges. Each element is either a single HTTP status code ("200") or a
+// hyphenated inclusive range ("200-299"). Entries must have been pre-validated
+// by ValidateVerifyRanges; malformed entries are silently skipped.
+func StatusCodeMatchesRanges(code int, ranges []string) bool {
+	for _, r := range ranges {
+		if !strings.Contains(r, "-") {
+			if c, err := strconv.Atoi(r); err == nil && c == code {
+				return true
+			}
+			continue
+		}
+		parts := strings.SplitN(r, "-", 2)
+		lo, err1 := strconv.Atoi(parts[0])
+		hi, err2 := strconv.Atoi(parts[1])
+		if err1 == nil && err2 == nil && code >= lo && code <= hi {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateVerifyRanges(ranges []string) error {

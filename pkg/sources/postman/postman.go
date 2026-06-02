@@ -186,6 +186,9 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ .
 	for _, workspaceID := range s.conn.Workspaces {
 		w, err := s.client.GetWorkspace(ctx, workspaceID)
 		if err != nil {
+			if errors.Is(err, errAbortScanDueToAPIRateLimit) {
+				return err
+			}
 			// Log and move on, because sometimes the Postman API seems to give us workspace IDs
 			// that we don't have access to, so we don't want to kill the scan because of it.
 			ctx.Logger().Error(err, "error getting workspace %s", workspaceID)
@@ -206,6 +209,9 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ .
 
 		collection, err := s.client.GetCollection(ctx, collectionID)
 		if err != nil {
+			if errors.Is(err, errAbortScanDueToAPIRateLimit) {
+				return err
+			}
 			// Log and move on, because sometimes the Postman API seems to give us collection IDs
 			// that we don't have access to, so we don't want to kill the scan because of it.
 			ctx.Logger().Error(err, "error getting collection %s", collectionID)
@@ -279,6 +285,9 @@ func (s *Source) scanWorkspace(ctx context.Context, chunksChan chan *sources.Chu
 	for _, envID := range workspace.Environments {
 		envVars, err := s.client.GetEnvironmentVariables(ctx, envID.Uid)
 		if err != nil {
+			if errors.Is(err, errAbortScanDueToAPIRateLimit) {
+				return err
+			}
 			ctx.Logger().Error(err, "could not get env variables", "environment_uuid", envID.Uid)
 			continue
 		}
@@ -316,6 +325,9 @@ func (s *Source) scanWorkspace(ctx context.Context, chunksChan chan *sources.Chu
 		}
 		collection, err := s.client.GetCollection(ctx, collectionID.Uid)
 		if err != nil {
+			if errors.Is(err, errAbortScanDueToAPIRateLimit) {
+				return err
+			}
 			// Log and move on, because sometimes the Postman API seems to give us collection IDs
 			// that we don't have access to, so we don't want to kill the scan because of it.
 			ctx.Logger().Error(err, "error getting collection %s", collectionID)
@@ -418,7 +430,7 @@ func (s *Source) scanItem(ctx context.Context, chunksChan chan *sources.Chunk, c
 	metadata.FolderID = item.Uid
 	// check if there are any requests in the folder
 	if item.Request.Method != "" {
-		metadata.FolderName = strings.Replace(metadata.FolderName, (" > " + item.Name), "", -1)
+		metadata.FolderName = strings.ReplaceAll(metadata.FolderName, (" > " + item.Name), "")
 		metadata.FolderID = parentItemId
 		if metadata.FolderID == "" {
 			metadata.FolderName = ""
@@ -458,7 +470,7 @@ func (s *Source) scanEvent(ctx context.Context, chunksChan chan *sources.Chunk, 
 
 	// Prep direct links. Ignore updating link if it's a local JSON file
 	if !metadata.fromLocal {
-		metadata.Link = LINK_BASE_URL + (strings.Replace(metadata.Type, " > event", "", -1)) + "/" + metadata.FullID
+		metadata.Link = LINK_BASE_URL + (strings.ReplaceAll(metadata.Type, " > event", "")) + "/" + metadata.FullID
 		if event.Listen == "prerequest" {
 			metadata.Link += "?tab=pre-request-scripts"
 		} else {
@@ -682,6 +694,8 @@ func (s *Source) scanHTTPResponse(ctx context.Context, chunksChan chan *sources.
 	if response.Uid != "" {
 		m.Link = LINK_BASE_URL + "example/" + response.Uid
 		m.FullID = response.Uid
+		m.ResponseID = response.Uid
+		m.ResponseName = response.Name
 	}
 	originalType := m.Type
 
@@ -785,10 +799,12 @@ func (s *Source) scanData(ctx context.Context, chunksChan chan *sources.Chunk, d
 					FolderName:      metadata.FolderName,
 					FieldType:       metadata.FieldType,
 					LocationType:    metadata.LocationType,
+					ResponseId:      metadata.ResponseID,
+					ResponseName:    metadata.ResponseName,
 				},
 			},
 		},
-		Verify: s.verify,
+		SourceVerify: s.verify,
 	}
 }
 
@@ -801,13 +817,13 @@ func unpackWorkspace(workspacePath string) (Workspace, error) {
 	if err != nil {
 		return workspace, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	for _, file := range r.File {
 		rc, err := file.Open()
 		if err != nil {
 			return workspace, err
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		contents, err := io.ReadAll(rc)
 		if err != nil {
 			return workspace, err

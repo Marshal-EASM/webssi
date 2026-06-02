@@ -21,6 +21,7 @@ import (
 	diskbufferreader "github.com/trufflesecurity/disk-buffer-reader"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 )
 
@@ -43,7 +44,7 @@ func TestHandleFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer func() {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
 
@@ -57,7 +58,7 @@ func TestHandleHTTPJson(t *testing.T) {
 	assert.NoError(t, err)
 	defer func() {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
 
@@ -81,7 +82,7 @@ func TestHandleHTTPJsonZip(t *testing.T) {
 	assert.NoError(t, err)
 	defer func() {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
 
@@ -109,7 +110,7 @@ func BenchmarkHandleHTTPJsonZip(b *testing.B) {
 
 			defer func() {
 				if resp != nil && resp.Body != nil {
-					resp.Body.Close()
+					_ = resp.Body.Close()
 				}
 			}()
 
@@ -133,7 +134,7 @@ func BenchmarkHandleHTTPJsonZip(b *testing.B) {
 func BenchmarkHandleFile(b *testing.B) {
 	file, err := os.Open("testdata/test.tgz")
 	assert.Nil(b, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -322,7 +323,7 @@ func TestHandleFileDOC(t *testing.T) {
 func BenchmarkHandleAR(b *testing.B) {
 	file, err := os.Open("testdata/test.deb")
 	assert.Nil(b, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -381,7 +382,7 @@ func TestExtractTarContentWithEmptyFile(t *testing.T) {
 func TestHandleTar(t *testing.T) {
 	file, err := os.Open("testdata/test.tar")
 	assert.Nil(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	chunkCh := make(chan *sources.Chunk, 1)
 	go func() {
@@ -401,7 +402,7 @@ func TestHandleTar(t *testing.T) {
 func BenchmarkHandleTar(b *testing.B) {
 	file, err := os.Open("testdata/test.tar")
 	assert.Nil(b, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -431,7 +432,7 @@ func TestHandleLargeHTTPJson(t *testing.T) {
 
 	defer func() {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
 
@@ -454,10 +455,10 @@ func TestHandlePipe(t *testing.T) {
 	r, w := io.Pipe()
 
 	go func() {
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		file, err := os.Open("testdata/test.tar")
 		assert.NoError(t, err)
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		_, err = io.Copy(w, file)
 		assert.NoError(t, err)
 	}()
@@ -542,7 +543,7 @@ func TestHandleGitCatFile(t *testing.T) {
 			} else {
 				gitDir = setupTempGitRepoWithUnsupportedFile(t, tt.fileName, tt.fileSize)
 			}
-			defer os.RemoveAll(gitDir)
+			defer func() { _ = os.RemoveAll(gitDir) }()
 
 			cmd := exec.Command("git", "-C", gitDir, "rev-parse", "HEAD")
 			hashBytes, err := cmd.Output()
@@ -633,7 +634,7 @@ func setupTempGitRepoCommon(t *testing.T, fileName string, fileSize int, isUnsup
 	if err != nil {
 		t.Fatalf("Failed to create file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if isUnsupported {
 		// Write ELF header for unsupported file.
@@ -757,7 +758,7 @@ func TestHandleGitCatFileWithPipeError(t *testing.T) {
 	simulatedError := errors.New("simulated error during newFileReader")
 
 	gitDir := setupTempGitRepo(t, fileName, fileSize)
-	defer os.RemoveAll(gitDir)
+	defer func() { _ = os.RemoveAll(gitDir) }()
 
 	commitHash := getGitCommitHash(t, gitDir)
 
@@ -881,6 +882,111 @@ func TestHandleChunksWithError(t *testing.T) {
 			}
 
 			assert.Equal(t, tc.expectedReportedChunks, reporter.reportedChunks, "should have reported the expected number of chunks")
+		})
+	}
+}
+
+// mockChunkReader creates a ChunkReader that returns predefined chunks.
+// Each chunk has data and contentSize (contentSize is used to determine
+// how many newlines to count for line tracking).
+func mockChunkReader(chunks []sources.ChunkResult) sources.ChunkReader {
+	return func(ctx context.Context, reader io.Reader) <-chan sources.ChunkResult {
+		ch := make(chan sources.ChunkResult, len(chunks))
+		for _, c := range chunks {
+			ch <- c
+		}
+		close(ch)
+		return ch
+	}
+}
+
+// TestPopulateChunkLineNumber verifies that populateChunkLineNumber correctly clones
+// metadata and sets line numbers for different metadata types.
+func TestPopulateChunkLineNumber(t *testing.T) {
+	tests := []struct {
+		name       string
+		metadata   *source_metadatapb.MetaData
+		lineNumber int64
+		getLine    func(*source_metadatapb.MetaData) int64
+	}{
+		{
+			name: "Filesystem metadata",
+			metadata: &source_metadatapb.MetaData{
+				Data: &source_metadatapb.MetaData_Filesystem{
+					Filesystem: &source_metadatapb.Filesystem{File: "test.txt"},
+				},
+			},
+			lineNumber: 42,
+			getLine: func(m *source_metadatapb.MetaData) int64 {
+				return m.Data.(*source_metadatapb.MetaData_Filesystem).Filesystem.Line
+			},
+		},
+		{
+			name: "Git metadata",
+			metadata: &source_metadatapb.MetaData{
+				Data: &source_metadatapb.MetaData_Git{
+					Git: &source_metadatapb.Git{File: "test.go"},
+				},
+			},
+			lineNumber: 100,
+			getLine: func(m *source_metadatapb.MetaData) int64 {
+				return m.Data.(*source_metadatapb.MetaData_Git).Git.Line
+			},
+		},
+		{
+			name: "Github metadata",
+			metadata: &source_metadatapb.MetaData{
+				Data: &source_metadatapb.MetaData_Github{
+					Github: &source_metadatapb.Github{File: "test.py"},
+				},
+			},
+			lineNumber: 200,
+			getLine: func(m *source_metadatapb.MetaData) int64 {
+				return m.Data.(*source_metadatapb.MetaData_Github).Github.Line
+			},
+		},
+		{
+			name:       "nil metadata",
+			metadata:   nil,
+			lineNumber: 10,
+			getLine:    func(m *source_metadatapb.MetaData) int64 { return 0 },
+		},
+		{
+			name: "zero line number",
+			metadata: &source_metadatapb.MetaData{
+				Data: &source_metadatapb.MetaData_Filesystem{
+					Filesystem: &source_metadatapb.Filesystem{File: "test.txt"},
+				},
+			},
+			lineNumber: 0,
+			getLine: func(m *source_metadatapb.MetaData) int64 {
+				return m.Data.(*source_metadatapb.MetaData_Filesystem).Filesystem.Line
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			chunk := &sources.Chunk{SourceMetadata: tc.metadata}
+			originalMetadata := tc.metadata
+
+			populateChunkLineNumber(chunk, tc.lineNumber)
+
+			if tc.metadata == nil || tc.lineNumber == 0 {
+				// Metadata should remain unchanged
+				assert.Equal(t, originalMetadata, chunk.SourceMetadata)
+				return
+			}
+
+			// Verify the line number is set correctly
+			actualLine := tc.getLine(chunk.SourceMetadata)
+			assert.Equal(t, tc.lineNumber, actualLine,
+				"line number should be set to %d, got %d", tc.lineNumber, actualLine)
+
+			// Verify the original is not modified (metadata was cloned)
+			originalLine := tc.getLine(tc.metadata)
+			assert.Equal(t, int64(0), originalLine,
+				"original metadata should not be modified, but line is %d", originalLine)
 		})
 	}
 }

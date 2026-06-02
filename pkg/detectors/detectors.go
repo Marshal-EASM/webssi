@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
+	"net/http"
 	"net/url"
 	"strings"
 	"unicode"
 
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
@@ -17,13 +20,22 @@ import (
 
 // Detector defines an interface for scanning for and verifying secrets.
 type Detector interface {
-	// FromData will scan bytes for results, and optionally verify them.
+	// FromData will scan bytes for results and optionally verify them.
+	//
+	// FromData can be called concurrently from multiple goroutines.
+	// Any modification to the receiver or to global variables will need to use some kind of synchronization.
 	FromData(ctx context.Context, verify bool, data []byte) ([]Result, error)
+
 	// Keywords are used for efficiently pre-filtering chunks using substring operations.
 	// Use unique identifiers that are part of the secret if you can, or the provider name.
+	//
+	// When multiple keywords are provided, they are is treated as a *union* of filtering terms.
+	// That is, if any of the keywords are found in a chunk, the chunk will be run through the detector.
 	Keywords() []string
-	// Type returns the DetectorType number from detectors.proto for the given detector.
-	Type() detectorspb.DetectorType
+
+	// Type returns the DetectorType number from detector_type.proto for the given detector.
+	Type() detector_typepb.DetectorType
+
 	// Description returns a description for the result being detected
 	Description() string
 }
@@ -86,10 +98,11 @@ type CloudProvider interface {
 
 type Result struct {
 	// DetectorType is the type of Detector.
-	DetectorType detectorspb.DetectorType
+	DetectorType detector_typepb.DetectorType
 	// DetectorName is the name of the Detector. Used for custom detectors.
 	DetectorName string
-	Verified     bool
+	// Verified indicates whether the result was verified or not.
+	Verified bool
 	// VerificationFromCache indicates whether this result's verification result came from the verification cache rather
 	// than an actual remote request.
 	VerificationFromCache bool
@@ -104,14 +117,15 @@ type Result struct {
 	ExtraData      map[string]string
 	StructuredData *detectorspb.StructuredData
 
-	// This field should only be populated if the verification process itself failed in a way that provides no
+	// verificationError should be populated if the verification process itself failed in a way that provides no
 	// information about the verification status of the candidate secret, such as if the verification request timed out.
 	verificationError error
 
-	// AnalysisInfo should be set with information required for credential
-	// analysis to run. The keys of the map are analyzer specific and
-	// should match what is expected in the corresponding analyzer.
-	AnalysisInfo map[string]string
+	// SecretParts holds the individual components of a (potentially multi-part)
+	// credential, keyed by a component name. It is used by analyzers where
+	// the keys are analyzer specific and should match what the
+	// corresponding analyzer expects.
+	SecretParts map[string]string
 
 	// primarySecret is used when a detector has multiple secret patterns.
 	// This secret is designated to determine the line number.
@@ -120,6 +134,11 @@ type Result struct {
 		Value string
 		Line  int64
 	}
+
+	// chunkOffset stores the byte position of this result's secret within chunk data.
+	// Used to disambiguate line numbers when the same secret appears multiple times.
+	chunkOffset    int64
+	chunkOffsetSet bool
 }
 
 // CopyVerificationInfo clones verification info (status and error) from another Result struct. This is used when
@@ -162,12 +181,28 @@ func (r *Result) GetPrimarySecretValue() string {
 	return r.primarySecret.Value
 }
 
+// SetChunkOffset records the byte position of this result's secret within the chunk data.
+func (r *Result) SetChunkOffset(offset int64) {
+	r.chunkOffset = offset
+	r.chunkOffsetSet = true
+}
+
+// ChunkOffset returns the byte position of this result's secret within the chunk data.
+func (r *Result) ChunkOffset() int64 {
+	return r.chunkOffset
+}
+
+// HasChunkOffset reports whether a chunk offset has been explicitly set on this result.
+func (r *Result) HasChunkOffset() bool {
+	return r.chunkOffsetSet
+}
+
 // redactSecrets replaces all instances of the given secrets with [REDACTED] in the error message.
 func redactSecrets(err error, secrets ...string) error {
 	lastErr := unwrapToLast(err)
 	errStr := lastErr.Error()
 	for _, secret := range secrets {
-		errStr = strings.Replace(errStr, secret, "[REDACTED]", -1)
+		errStr = strings.ReplaceAll(errStr, secret, "[REDACTED]")
 	}
 	return errors.New(errStr)
 }
@@ -203,16 +238,23 @@ type ResultWithMetadata struct {
 	// SourceName is the name of the Source.
 	SourceName string
 	Result
-	// Data from the sources.Chunk which this result was emitted for
-	Data []byte
 	// DetectorDescription is the description of the Detector.
 	DetectorDescription string
 	// DecoderType is the type of decoder that was used to generate this result's data.
 	DecoderType detectorspb.DecoderType
+	// ChunkData holds the original pre-decode source chunk data, preserved
+	// for secret storage encryption in the dispatcher.
+	ChunkData []byte
 }
 
 // CopyMetadata returns a detector result with included metadata from the source chunk.
 func CopyMetadata(chunk *sources.Chunk, result Result) ResultWithMetadata {
+	// OriginalData may be nil when CopyMetadata is called outside the engine
+	// pipeline (e.g., in tests or external consumers that construct chunks directly).
+	chunkData := chunk.OriginalData
+	if chunkData == nil {
+		chunkData = chunk.Data
+	}
 	return ResultWithMetadata{
 		SourceMetadata: chunk.SourceMetadata,
 		SourceID:       chunk.SourceID,
@@ -221,7 +263,7 @@ func CopyMetadata(chunk *sources.Chunk, result Result) ResultWithMetadata {
 		SourceType:     chunk.SourceType,
 		SourceName:     chunk.SourceName,
 		Result:         result,
-		Data:           chunk.Data,
+		ChunkData:      chunkData,
 	}
 }
 
@@ -289,7 +331,7 @@ func MustGetBenchmarkData() map[string][]byte {
 	for key, size := range sizes {
 		// Generating a byte slice of a specific size with random data.
 		content := make([]byte, size)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			randomByte, err := rand.Int(rand.Reader, big.NewInt(256))
 			if err != nil {
 				panic(err)
@@ -304,7 +346,7 @@ func MustGetBenchmarkData() map[string][]byte {
 
 func RedactURL(u url.URL) string {
 	u.User = url.UserPassword(u.User.Username(), "********")
-	return strings.TrimSpace(strings.Replace(u.String(), "%2A", "*", -1))
+	return strings.TrimSpace(strings.ReplaceAll(u.String(), "%2A", "*"))
 }
 
 func ParseURLAndStripPathAndParams(u string) (*url.URL, error) {
@@ -315,4 +357,21 @@ func ParseURLAndStripPathAndParams(u string) (*url.URL, error) {
 	parsedURL.Path = ""
 	parsedURL.RawQuery = ""
 	return parsedURL, nil
+}
+
+type dedupKeyContextKey struct{}
+
+func withDedupKey(ctx context.Context, detType detector_typepb.DetectorType, credential string) context.Context {
+	key := fmt.Sprintf("%d:%s", int32(detType), credential)
+	return context.WithValue(ctx, dedupKeyContextKey{}, key)
+}
+
+// DoWithDedup executes req through client, coalescing concurrent requests that share
+// the same detector type and credential into a single network call via singleflight.
+// The response body is fully buffered and replayed to every waiting caller.
+//
+// Use this instead of client.Do for all verification requests on a client created
+// with NewClientWithDedup or WithDedup — it is the only way to activate deduplication.
+func DoWithDedup(client *http.Client, detType detector_typepb.DetectorType, credential string, req *http.Request) (*http.Response, error) {
+	return client.Do(req.WithContext(withDedupKey(req.Context(), detType, credential)))
 }

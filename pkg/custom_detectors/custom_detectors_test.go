@@ -2,6 +2,9 @@ package custom_detectors
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,7 +13,7 @@ import (
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/custom_detectorspb"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/protoyaml"
 )
 
@@ -44,6 +47,30 @@ verify:
 	assert.Equal(t, true, got.Verify[0].Unsafe)
 	assert.Equal(t, []string{"Authorization: Bearer {secret_pat_example.0}"}, got.Verify[0].Headers)
 	assert.Equal(t, []string{"200-250", "288"}, got.Verify[0].SuccessRanges)
+}
+
+func TestCustomRegexTemplateParsingWithRotatedRanges(t *testing.T) {
+	testYaml := `name: test
+keywords:
+- secret
+regex:
+  token: ([a-zA-Z0-9]{32})
+verify:
+- endpoint: http://localhost:8000/
+  unsafe: true
+  headers:
+  - 'Authorization: Bearer token'
+  successRanges:
+  - '200'
+  rotatedRanges:
+  - '401'
+  - 403-404`
+
+	var got custom_detectorspb.CustomRegex
+	assert.NoError(t, protoyaml.UnmarshalStrict([]byte(testYaml), &got))
+	assert.Equal(t, 1, len(got.Verify))
+	assert.Equal(t, []string{"200"}, got.Verify[0].SuccessRanges)
+	assert.Equal(t, []string{"401", "403-404"}, got.Verify[0].RotatedRanges)
 }
 
 func TestCustomRegexWebhookParsing(t *testing.T) {
@@ -231,6 +258,60 @@ func TestDetectorPrimarySecret(t *testing.T) {
 	assert.Equal(t, "secret_YI7C90ACY1_yy", results[0].GetPrimarySecretValue())
 }
 
+func TestDetectorPrimarySecretFullMatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		input *custom_detectorspb.CustomRegex
+		chunk []byte
+		want  string
+	}{
+		{
+			name: "primary regex full match",
+			input: &custom_detectorspb.CustomRegex{
+				Name:             "test",
+				Keywords:         []string{"secret"},
+				Regex:            map[string]string{"secret": `secret *= *"([^"\r\n]+)"`},
+				PrimaryRegexName: "secret",
+			},
+			chunk: []byte(`
+			// some code
+			secret="mysecret"
+			// some code
+			`),
+			want: `secret="mysecret"`,
+		},
+		{
+			name: "primary regex full match multiline",
+			input: &custom_detectorspb.CustomRegex{
+				Name:             "test",
+				Keywords:         []string{"secret"},
+				Regex:            map[string]string{"secret": `secret *= *"([^"]+)"`},
+				PrimaryRegexName: "secret",
+			},
+			chunk: []byte(`
+			// some code
+			secret="mysecret
+			thatspansmultiplelines"
+			// some code
+			`),
+			want: `secret="mysecret
+			thatspansmultiplelines"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector, err := NewWebhookCustomRegex(tt.input)
+			assert.NoError(t, err)
+			results, err := detector.FromData(context.Background(), false, tt.chunk)
+			assert.NoError(t, err)
+			assert.Equal(t, 1, len(results))
+			assert.Equal(t, tt.want, results[0].GetPrimarySecretValue())
+		})
+	}
+
+}
+
 func TestDetectorValidations(t *testing.T) {
 	type args struct {
 		CustomRegex *custom_detectorspb.CustomRegex
@@ -262,7 +343,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("MyStr0ngP@ssword!"),
@@ -309,7 +390,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("MyStrongPassword!"),
@@ -356,7 +437,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("MyStrongPassword!"),
@@ -403,7 +484,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("MyStr@ngP@ssword!"),
@@ -451,7 +532,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("MyStrongP@ssword"),
@@ -499,7 +580,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("mystrongp@ssword"),
@@ -535,7 +616,7 @@ func TestDetectorValidations(t *testing.T) {
 			},
 			want: []detectors.Result{
 				{
-					DetectorType: detectorspb.DetectorType_CustomRegex,
+					DetectorType: detector_typepb.DetectorType_CustomRegex,
 					DetectorName: "test",
 					Verified:     false,
 					Raw:          []byte("c392c9837d69b44c764cbf260b-e6184MyStrongP@ssword"),
@@ -551,12 +632,361 @@ func TestDetectorValidations(t *testing.T) {
 			results, err := detector.FromData(context.Background(), false, []byte(tt.input.Data))
 			assert.NoError(t, err)
 
-			ignoreOpts := cmpopts.IgnoreFields(detectors.Result{}, "ExtraData", "verificationError", "primarySecret")
+			ignoreOpts := cmp.Options{
+				cmpopts.IgnoreUnexported(detectors.Result{}),
+				cmpopts.IgnoreFields(detectors.Result{}, "ExtraData"),
+			}
 			if diff := cmp.Diff(results, tt.want, ignoreOpts); diff != "" {
 				t.Errorf("CustomDetector.FromData() %s diff: (-got +want)\n%s", tt.name, diff)
 			}
 		})
 	}
+}
+
+func TestNewWebhookCustomRegex_Validation(t *testing.T) {
+	t.Parallel()
+
+	// A known-good baseline; each test case mutates exactly one thing to trigger a specific validator.
+	base := func() *custom_detectorspb.CustomRegex {
+		return &custom_detectorspb.CustomRegex{
+			Name:     "ok",
+			Keywords: []string{"kw"},
+			Regex: map[string]string{
+				"main": `\btoken_[a-z]+\b`,
+			},
+			PrimaryRegexName: "main",
+			ExcludeRegexesCapture: []string{
+				`^skip_.*$`,
+			},
+			ExcludeRegexesMatch: []string{
+				`^ignore_.*$`,
+			},
+			Verify: []*custom_detectorspb.VerifierConfig{
+				{
+					Endpoint: "https://example.com/verify",
+					Unsafe:   false,
+					Headers:  []string{"Authorization: Bearer x"},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		mutate        func(*custom_detectorspb.CustomRegex)
+		wantErr       bool
+		wantErrSubstr string // substring expected in error
+	}{
+		{
+			name:   "Validate everything ok",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {},
+		},
+		{
+			name: "ValidateKeywords: no keywords",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Keywords = nil
+			},
+			wantErr:       true,
+			wantErrSubstr: "no keywords",
+		},
+		{
+			name: "ValidateKeywords: empty keyword",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Keywords = []string{""}
+			},
+			wantErr:       true,
+			wantErrSubstr: "empty keyword",
+		},
+		{
+			name: "ValidateRegex: no regex",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Regex = nil
+			},
+			wantErr:       true,
+			wantErrSubstr: "no regex",
+		},
+		{
+			name: "ValidateRegex: invalid regex in map",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Regex = map[string]string{"main": "("} // invalid
+			},
+			wantErr:       true,
+			wantErrSubstr: "regex 'main':",
+		},
+		{
+			name: "ValidateRegexSlice: invalid exclude_regexes_capture",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.ExcludeRegexesCapture = []string{"("} // invalid
+			},
+			wantErr:       true,
+			wantErrSubstr: "regex '1':",
+		},
+		{
+			name: "ValidateRegexSlice: invalid exclude_regexes_match",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.ExcludeRegexesMatch = []string{"("} // invalid
+			},
+			wantErr:       true,
+			wantErrSubstr: "regex '1':",
+		},
+		{
+			name: "ValidatePrimaryRegexName: unknown primary regex name",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.PrimaryRegexName = "does-not-exist"
+			},
+			wantErr:       true,
+			wantErrSubstr: `unknown primary regex name: "does-not-exist"`,
+		},
+		{
+			name: "ValidateVerifyEndpoint: empty endpoint",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Verify = []*custom_detectorspb.VerifierConfig{
+					{Endpoint: "", Unsafe: false, Headers: []string{"A: b"}},
+				}
+			},
+			wantErr:       true,
+			wantErrSubstr: "no endpoint",
+		},
+		{
+			name: "ValidateVerifyEndpoint: http endpoint without unsafe=true",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Verify = []*custom_detectorspb.VerifierConfig{
+					{Endpoint: "http://example.com/verify", Unsafe: false, Headers: []string{"A: b"}},
+				}
+			},
+			wantErr:       true,
+			wantErrSubstr: "http endpoint must have unsafe=true",
+		},
+		{
+			name: "ValidateVerifyHeaders: header missing colon",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Verify = []*custom_detectorspb.VerifierConfig{
+					{Endpoint: "https://example.com/verify", Unsafe: false, Headers: []string{"Authorization Bearer x"}},
+				}
+			},
+			wantErr:       true,
+			wantErrSubstr: `must contain a colon`,
+		},
+		{
+			name: "ValidateVerifyRanges: invalid successRanges",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Verify = []*custom_detectorspb.VerifierConfig{
+					{Endpoint: "https://example.com/verify", Headers: []string{"A: b"}, SuccessRanges: []string{"abc"}},
+				}
+			},
+			wantErr:       true,
+			wantErrSubstr: "unable to convert http code to int",
+		},
+		{
+			name: "ValidateVerifyRanges: invalid rotatedRanges",
+			mutate: func(pb *custom_detectorspb.CustomRegex) {
+				pb.Verify = []*custom_detectorspb.VerifierConfig{
+					{Endpoint: "https://example.com/verify", Headers: []string{"A: b"}, RotatedRanges: []string{"999"}},
+				}
+			},
+			wantErr:       true,
+			wantErrSubstr: "invalid http status code",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pb := base()
+			tt.mutate(pb)
+
+			got, err := NewWebhookCustomRegex(pb)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("expected error=%v, got error=%v (result=%#v)", tt.wantErr, err != nil, got)
+			}
+			if tt.wantErr && got != nil {
+				t.Fatalf("expected nil result on error, got=%#v", got)
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), tt.wantErrSubstr) {
+				t.Fatalf("error mismatch:\n  got:  %q\n  want substring: %q", err.Error(), tt.wantErrSubstr)
+			}
+		})
+	}
+}
+
+func TestNewWebhookCustomRegex_EnsurePrimaryRegexNameSet(t *testing.T) {
+	t.Parallel()
+
+	pb := &custom_detectorspb.CustomRegex{
+		Name:     "test",
+		Keywords: []string{"kw"},
+		Regex: map[string]string{
+			"regex_a": `regex_a`,
+			"regex_b": `regex_b`,
+		},
+		// PrimaryRegexName is not set.
+	}
+
+	detector, err := NewWebhookCustomRegex(pb)
+	assert.NoError(t, err)
+	assert.Equal(t, "regex_a", detector.GetPrimaryRegexName(), "expected PrimaryRegexName to be set to regex_a")
+}
+
+func TestVerificationWithConfigurableRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		serverStatus      int
+		successRanges     []string
+		rotatedRanges     []string
+		wantVerified      bool
+		wantVerifyErr     bool
+	}{
+		{
+			name:          "backward compat: no ranges, 200 -> verified",
+			serverStatus:  200,
+			wantVerified:  true,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "backward compat: no ranges, 401 -> unverified",
+			serverStatus:  401,
+			wantVerified:  false,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "successRanges match -> verified",
+			serverStatus:  201,
+			successRanges: []string{"200-202"},
+			wantVerified:  true,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "rotatedRanges match -> not verified, no error",
+			serverStatus:  401,
+			successRanges: []string{"200"},
+			rotatedRanges: []string{"401", "403"},
+			wantVerified:  false,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "neither match -> not verified, verification error",
+			serverStatus:  500,
+			successRanges: []string{"200"},
+			rotatedRanges: []string{"401"},
+			wantVerified:  false,
+			wantVerifyErr: true,
+		},
+		{
+			name:          "successRanges range boundary inclusive",
+			serverStatus:  250,
+			successRanges: []string{"200-250"},
+			wantVerified:  true,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "only successRanges: non-match means rotated",
+			serverStatus:  401,
+			successRanges: []string{"200"},
+			wantVerified:  false,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "only rotatedRanges: non-match means live",
+			serverStatus:  200,
+			rotatedRanges: []string{"401", "403"},
+			wantVerified:  true,
+			wantVerifyErr: false,
+		},
+		{
+			name:          "only rotatedRanges: match means rotated",
+			serverStatus:  401,
+			rotatedRanges: []string{"401"},
+			wantVerified:  false,
+			wantVerifyErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.serverStatus)
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			}))
+			defer ts.Close()
+
+			detector, err := NewWebhookCustomRegex(&custom_detectorspb.CustomRegex{
+				Name:     "test",
+				Keywords: []string{"secret"},
+				Regex:    map[string]string{"token": `(secret_[a-zA-Z0-9]{10})`},
+				Verify: []*custom_detectorspb.VerifierConfig{
+					{
+						Endpoint:      ts.URL,
+						Unsafe:        true,
+						Headers:       []string{"Authorization: Bearer test"},
+						SuccessRanges: tt.successRanges,
+						RotatedRanges: tt.rotatedRanges,
+					},
+				},
+			})
+			assert.NoError(t, err)
+
+			results, err := detector.FromData(context.Background(), true, []byte("secret_ABCDEFGHIJ"))
+			assert.NoError(t, err)
+			assert.Equal(t, 1, len(results), "expected exactly one result")
+
+			result := results[0]
+			assert.Equal(t, tt.wantVerified, result.Verified, "Verified mismatch")
+			if tt.wantVerifyErr {
+				assert.NotNil(t, result.VerificationError(), "expected a verification error")
+			} else {
+				assert.Nil(t, result.VerificationError(), "expected no verification error")
+			}
+		})
+	}
+}
+
+func TestVerificationMixedRangedAndLegacyVerifiers(t *testing.T) {
+	t.Parallel()
+
+	// Verifier 1 has ranges configured but returns a status matching neither.
+	// Verifier 2 is legacy (no ranges) and returns 200.
+	// The result should be Verified=true with NO verification error.
+	tsRanged := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer tsRanged.Close()
+
+	tsLegacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer tsLegacy.Close()
+
+	detector, err := NewWebhookCustomRegex(&custom_detectorspb.CustomRegex{
+		Name:     "test",
+		Keywords: []string{"secret"},
+		Regex:    map[string]string{"token": `(secret_[a-zA-Z0-9]{10})`},
+		Verify: []*custom_detectorspb.VerifierConfig{
+			{
+				Endpoint:      tsRanged.URL,
+				Unsafe:        true,
+				Headers:       []string{"A: b"},
+				SuccessRanges: []string{"200"},
+				RotatedRanges: []string{"401"},
+			},
+			{
+				Endpoint: tsLegacy.URL,
+				Unsafe:   true,
+				Headers:  []string{"A: b"},
+			},
+		},
+	})
+	assert.NoError(t, err)
+
+	results, err := detector.FromData(context.Background(), true, []byte("secret_ABCDEFGHIJ"))
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(results))
+	assert.True(t, results[0].Verified, "expected Verified=true from legacy fallback")
+	assert.Nil(t, results[0].VerificationError(), "legacy success must not produce a spurious verification error")
 }
 
 func BenchmarkProductIndices(b *testing.B) {
