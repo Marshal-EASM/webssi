@@ -177,9 +177,7 @@ func TestScanURLsWithMockHTTPServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		_, _ = w.Write([]byte(`
-DATABASE_URL=postgres://user:password123@localhost:5432/mydb
-AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+postgres token - 'postgres://sN19x:d7N8bs@1.2.3.4:5432'
 `))
 	}))
 	defer server.Close()
@@ -197,6 +195,20 @@ AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+
+	foundURLMetadata := false
+	for _, finding := range result.Results {
+		if finding.SourceMetadata.GetUrl().GetLink() == server.URL {
+			foundURLMetadata = true
+			break
+		}
+	}
+	if !foundURLMetadata {
+		t.Fatalf("expected result SourceMetadata URL link to be %q", server.URL)
 	}
 	if requests.Load() == 0 {
 		t.Fatal("expected mock HTTP server to be requested")

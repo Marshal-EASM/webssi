@@ -435,5 +435,6 @@ message MetaData {
     Stdin stdin = 34;
     SlackContinuous slackContinuous = 35;
     JSONEnumerator jsonEnumerator = 36;
+    URL url = 37;
   }
 }

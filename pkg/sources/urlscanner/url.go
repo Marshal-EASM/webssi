@@ -90,12 +90,18 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ .
 			defer stdin.Close()
 
 			chunkSkel := &sources.Chunk{
-				SourceType:     s.Type(),
-				SourceName:     s.name,
-				SourceID:       s.SourceID(),
-				JobID:          s.JobID(),
-				SourceMetadata: &source_metadatapb.MetaData{},
-				SourceVerify:   s.verify,
+				SourceType: s.Type(),
+				SourceName: s.name,
+				SourceID:   s.SourceID(),
+				JobID:      s.JobID(),
+				SourceMetadata: &source_metadatapb.MetaData{
+					Data: &source_metadatapb.MetaData_Url{
+						Url: &source_metadatapb.URL{
+							Link: target,
+						},
+					},
+				},
+				SourceVerify: s.verify,
 			}
 			ctx.Logger().Info("scanning url for secrets", "url", target)
 			return handlers.HandleFile(ctx, stdin, chunkSkel, sources.ChanReporter{Ch: chunksChan})
